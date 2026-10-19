@@ -32,15 +32,21 @@ psql_var() { # name value sql
   printf '%s\n' "$1" | psql_q -v "$name=$value"
 }
 
-ensure_role() { # name password
-  if [ "$(psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$1'")" != "1" ]; then
+ensure_role() { # name password; a query error stops the bootstrap
+  local r
+  r=$(psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$1'") || { echo "cannot read pg_roles ($1): stopping without changes" >&2; exit 1; }
+  if [ "$r" != "1" ]; then
     psql_q -c "CREATE ROLE \"$1\" LOGIN"
     echo "role $1 created"
   fi
   psql_var pw "$2" "ALTER ROLE \"$1\" WITH LOGIN PASSWORD :'pw'"
 }
 
-db_exists() { [ "$(psql -tAc "SELECT 1 FROM pg_database WHERE datname='$1'")" = "1" ]; }
+db_exists() { # name: 0 = exists, 1 = missing; a query error stops the bootstrap
+  local r
+  r=$(psql -tAc "SELECT 1 FROM pg_database WHERE datname='$1'") || { echo "cannot read pg_database ($1): stopping without changes" >&2; exit 1; }
+  [ "$r" = "1" ]
+}
 
 ensure_role bbb_core "$BBB_CORE_PASSWORD"
 ensure_role bbb_hasura "$BBB_HASURA_PASSWORD"
