@@ -1,0 +1,153 @@
+{{- $schemaSha := required "bootstrap.schemaSha is empty: run images/build.sh bootstrap" .Values.bootstrap.schemaSha }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: akka-apps-config
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+data:
+  # Same shape the package preinst writes: include the packaged defaults, override what differs.
+  # Only http.* accepts env vars upstream; the rest is HOCON, with secrets resolved from env.
+  bbb-apps-akka.conf: |
+    include file("/usr/share/bbb-apps-akka/conf/application.conf")
+
+    redis.host = "redis"
+    postgres.properties.serverName = "postgres"
+    postgres.properties.password = ${BBB_CORE_PASSWORD}
+    services.bbbWebAPI = {{ .Values.akkaApps.bbbWebAPI | quote }}
+    services.sharedSecret = ${SHARED_SECRET}
+    services.graphqlMiddlewareAPI = {{ .Values.akkaApps.graphqlMiddlewareAPI | quote }}
+    http.interface = "0.0.0.0"
+---
+# akka-apps is the reader of the client settings (ClientSettings.scala); bbb-web mounts it later too.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: client-settings
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+data:
+  # Admin overrides merged over settings.yml (the bbb-html5.yml of a package install).
+  bbb-html5.yml: |
+    {{- toYaml .Values.clientSettingsOverride | nindent 4 }}
+  settings.yml: |
+    {{- .Files.Get "files/settings.yml" | required "chart/files/settings.yml is missing: run images/build.sh akka-apps" | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: akka-apps
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "bbb.selector" "akka-apps" | nindent 4 }}
+  ports:
+    - name: http
+      port: 8901
+---
+# One replica, Recreate: a new akka booting next to the old one marks every meeting as ended
+# (BigBlueButtonActor.preStart -> MeetingDAO.setAllMeetingsEnded), spec D9.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: akka-apps
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- include "bbb.selector" "akka-apps" | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "bbb.selector" "akka-apps" | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.selector" "akka-apps" | nindent 8 }}
+      annotations:
+        # Schema sha only (not the bootstrap image tag): a new schema recreates akka in the
+        # same upgrade, a bootstrap image bump does not.
+        bbb-k8s/schema-sha: {{ $schemaSha | quote }}
+    spec:
+      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.akkaApps.role) | nindent 6 }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      securityContext:
+        runAsUser: 998
+        runAsGroup: 998
+      initContainers:
+        # Hold akka until the bootstrap Job wrote the marker of the current schema.
+        - name: wait-bootstrap
+          image: {{ .Values.postgres.image }}
+          env:
+            - name: PGHOST
+              value: postgres
+            - name: PGUSER
+              value: bbb_core
+            - name: PGDATABASE
+              value: postgres
+            - name: EXPECTED
+              value: {{ printf "schema-sha:%s" $schemaSha | quote }}
+            {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "PGPASSWORD" "key" "bbb-core-password") | nindent 12 }}
+          command:
+            - sh
+            - -c
+            - |
+              q="SELECT shobj_description(oid, 'pg_database') FROM pg_database WHERE datname = 'bbb_graphql'"
+              until [ "$(psql -tAc "$q" 2>/dev/null)" = "$EXPECTED" ]; do
+                echo "waiting for bbb_graphql at $EXPECTED"; sleep 3
+              done
+              echo "bbb_graphql is at $EXPECTED"
+      containers:
+        - name: akka-apps
+          image: {{ include "bbb.image" (dict "root" . "name" "akka-apps" "tag" .Values.akkaApps.tag) }}
+          env:
+            - name: INTERFACE
+              value: "0.0.0.0"
+            {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "BBB_CORE_PASSWORD" "key" "bbb-core-password") | nindent 12 }}
+            - name: SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.salt }}
+                  key: security-salt
+          ports:
+            - name: http
+              containerPort: 8901
+          # TCP only: /healthz is 503 in the first minute and whenever bbb-web is away
+          # (HealthzService.scala); as liveness it would turn a hiccup into ended meetings.
+          readinessProbe:
+            tcpSocket:
+              port: 8901
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8901
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            {{- toYaml .Values.akkaApps.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/bigbluebutton/bbb-apps-akka.conf
+              subPath: bbb-apps-akka.conf
+            - name: client-settings
+              mountPath: /usr/share/bigbluebutton/html5-client/private/config/settings.yml
+              subPath: settings.yml
+            - name: client-settings
+              mountPath: /etc/bigbluebutton/bbb-html5.yml
+              subPath: bbb-html5.yml
+            - name: logs
+              mountPath: /usr/share/bbb-apps-akka/logs
+      volumes:
+        - name: config
+          configMap:
+            name: akka-apps-config
+        - name: client-settings
+          configMap:
+            name: client-settings
+        - name: logs
+          emptyDir: {}

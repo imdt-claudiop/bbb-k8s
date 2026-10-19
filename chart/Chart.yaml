@@ -1,0 +1,6 @@
+apiVersion: v2
+name: bbb
+description: BigBlueButton on Kubernetes (phase 1, lift-and-shift, one pod per service)
+type: application
+version: 0.1.0
+appVersion: "4.1"

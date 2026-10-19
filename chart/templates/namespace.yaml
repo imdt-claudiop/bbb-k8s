@@ -1,0 +1,3 @@
+{{- if ne .Release.Namespace "bbb" }}
+{{- fail "install this chart into the namespace bbb (helm install ... -n bbb --create-namespace)" }}
+{{- end }}

@@ -1,0 +1,49 @@
+# BigBlueButton line this chart packages. Source commit of every image built by images/build.sh.
+bbb:
+  sourceSha: "66b0bb09591f4d66868f65822d918702ddf389cd"
+
+registry: ghcr.io/imdt-claudiop/bbb-k8s
+imagePullSecret: ghcr-pull
+
+# Secrets are created outside the chart (docs/install.md).
+secrets:
+  db: bbb-db          # keys: postgres-password, bbb-core-password, bbb-hasura-password,
+                      #       hasura-app-password, blocknote-app-password
+  salt: bbb-salt      # key: security-salt
+
+# Node roles (spec D1). Label the nodes with  bbb-k8s/role=<role>.
+nodeRoleLabel: bbb-k8s/role
+
+postgres:
+  image: "postgres:16"
+  role: data
+  storageClass: do-block-storage-retain
+  size: 10Gi
+  # bbb-pg.conf of bbb-graphql-server (Hasura may use up to 100 connections).
+  maxConnections: 300
+
+redis:
+  image: "redis:7.4"
+  role: control
+  storageClass: do-block-storage-retain
+  size: 5Gi
+
+bootstrap:
+  # Both written by images/build.sh. schemaSha is the single source of truth for the
+  # bbb_graphql marker; it must equal the sha256 of the bbb_schema.sql inside the image.
+  tag: "4.1-66b0bb09-b2"
+  schemaSha: "ad5626dd845579ffb604e42c76f9f3eb3d91f4b326a0d804bfdbafcb4a7d3cb9"
+
+# Client settings overrides (same keys as settings.yml), the /etc/bigbluebutton/bbb-html5.yml
+# of a package install. Without the file akka logs a parse error at boot.
+clientSettingsOverride: {}
+
+akkaApps:
+  tag: "4.1-66b0bb09-b1"
+  role: control
+  resources:
+    requests: { cpu: 500m, memory: 768Mi }
+    limits: { cpu: "1", memory: 1280Mi }
+  # Endpoints of services that later slices deploy; akka boots without them.
+  bbbWebAPI: "http://bbb-web:8090/bigbluebutton/api"
+  graphqlMiddlewareAPI: "http://gql-middleware:8378"

@@ -1,0 +1,42 @@
+{{- if not .Values.bootstrap.schemaSha }}{{ fail "bootstrap.schemaSha is empty: run images/build.sh bootstrap" }}{{ end }}
+# Plain resource, not a hook: a hook would deadlock with "helm --wait" waiting for akka-apps,
+# which in turn waits for this Job (spec D8, order Postgres/Redis -> bootstrap -> akka).
+# The name changes with the schema or the image tag, so an upgrade replaces the Job instead
+# of patching its immutable template.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "bbb.bootstrapJobName" . }}
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- include "bbb.selector" "bootstrap" | nindent 4 }}
+  annotations:
+    bbb-k8s/schema-sha: {{ .Values.bootstrap.schemaSha | quote }}
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.selector" "bootstrap" | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      initContainers:
+        - name: wait-postgres
+          image: {{ .Values.postgres.image }}
+          command: ["sh", "-c", "until pg_isready -h postgres -p 5432 -t 2; do sleep 2; done"]
+      containers:
+        - name: bootstrap
+          image: {{ include "bbb.image" (dict "root" . "name" "bootstrap" "tag" .Values.bootstrap.tag) }}
+          env:
+            - name: PGHOST
+              value: postgres
+            - name: SCHEMA_SHA
+              value: {{ .Values.bootstrap.schemaSha | quote }}
+            {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "PGPASSWORD" "key" "postgres-password") | nindent 12 }}
+            {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "BBB_CORE_PASSWORD" "key" "bbb-core-password") | nindent 12 }}
+            {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "BBB_HASURA_PASSWORD" "key" "bbb-hasura-password") | nindent 12 }}
+            {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "HASURA_APP_PASSWORD" "key" "hasura-app-password") | nindent 12 }}
+            {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "BLOCKNOTE_APP_PASSWORD" "key" "blocknote-app-password") | nindent 12 }}
