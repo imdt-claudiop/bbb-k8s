@@ -31,7 +31,7 @@ redis:
 bootstrap:
   # Both written by images/build.sh. schemaSha is the single source of truth for the
   # bbb_graphql marker; it must equal the sha256 of the bbb_schema.sql inside the image.
-  tag: "4.1-66b0bb09-b2"
+  tag: "4.1-66b0bb09-b4"
   schemaSha: "ad5626dd845579ffb604e42c76f9f3eb3d91f4b326a0d804bfdbafcb4a7d3cb9"
 
 # Client settings overrides (same keys as settings.yml), the /etc/bigbluebutton/bbb-html5.yml

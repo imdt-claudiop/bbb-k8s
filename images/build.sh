@@ -62,4 +62,4 @@ for c in "$@"; do
       ;;
   esac
 done
-[ "$PUSH" = 1 ] && echo ">> chart/values.yaml updated (tag $TAG)"
+if [ "$PUSH" = 1 ]; then echo ">> chart/values.yaml updated (tag $TAG)"; fi

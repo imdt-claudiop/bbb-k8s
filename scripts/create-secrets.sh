@@ -1,6 +1,6 @@
 #!/bin/bash
 # Create the namespace and the Secrets the chart references. Idempotent: existing Secrets are
-# kept (rotating a database password needs the bootstrap Job to run again, see docs/install.md).
+# kept (rotating a database password needs the bootstrap Job to run again).
 #
 # Env: GHCR_USER, GHCR_TOKEN (a token with read:packages on the bbb-k8s images).
 set -euo pipefail

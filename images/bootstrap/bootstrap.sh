@@ -55,7 +55,7 @@ fi
 if [ "$current" != "$MARKER" ]; then
   echo "bbb_graphql marker is '${current:-<missing>}', expected '$MARKER': recreating"
   psql_q -c "DROP DATABASE IF EXISTS bbb_graphql WITH (FORCE)"
-  psql_q -c "CREATE DATABASE bbb_graphql WITH TEMPLATE template0 LC_COLLATE 'C.UTF-8' LC_CTYPE 'C.UTF-8'"
+  psql_q -c "CREATE DATABASE bbb_graphql WITH TEMPLATE template0 LC_COLLATE 'C.UTF-8'"
   psql_q -c "ALTER DATABASE bbb_graphql SET timezone TO 'UTC'"
   psql_q -d bbb_graphql -f "$SCHEMA"
   recreated=1

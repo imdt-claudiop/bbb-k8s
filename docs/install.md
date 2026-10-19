@@ -84,6 +84,8 @@ kubectl get pv --no-headers | awk '$5=="Released" && $6 ~ /^bbb\// {print $1}' \
   | xargs -r -I{} kubectl patch pv {} -p '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}'
 ```
 
+Then confirm in the DigitalOcean panel or with `doctl compute volume list` that the volumes are gone; this step was exercised only up to the removal of the PersistentVolumes.
+
 ## Known limitations of this slice
 
 - akka-apps `/healthz` answers 503 until bbb-web and the GraphQL middleware exist (later
