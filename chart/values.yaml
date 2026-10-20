@@ -80,7 +80,7 @@ graphqlActions:
     limits: { cpu: 500m, memory: 512Mi }
 
 sharedNotes:
-  tag: "4.1-66b0bb09-20261020190249"
+  tag: "4.1-66b0bb09-20261020213511"
   role: control
   resources:
     requests: { cpu: 100m, memory: 192Mi }

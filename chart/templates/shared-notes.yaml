@@ -10,9 +10,11 @@ expressServer:
 hocuspocusServer:
   host: 127.0.0.1
   port: 9001
+# The PDF export runs "<runnerScript> <timeout> wkhtmltopdf ...". The package runner wraps it in a
+# transient systemd user unit, which a container does not have; timeout takes the same arguments.
 commandExecution:
   workDir: /tmp/shared-notes-dropbox/
-  runnerScript: /usr/share/bbb-shared-notes-server/run-in-systemd.sh
+  runnerScript: /usr/bin/timeout
   timeout: 30
 bbbWeb:
   host: bbb-web

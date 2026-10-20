@@ -44,7 +44,10 @@ data:
 # bbb-export-annotations: reads an export job from the Redis exportJobs queue, reads the presentation
 # PDF/slides from the bbb-data volume (exportJob.presLocation), renders the annotated PDF and POSTs it
 # back to bbb-web (notifier.js -> bbbWebAPI). Storage node, next to bbb-web and its presentation files
-# (RWO bbb-data, mounted read-only here). No listening port: it is a Redis consumer, so no Service.
+# (RWO bbb-data). The worker writes the merged PDF into <presLocation>/pdfs/<jobId> before the upload,
+# so the volume is mounted read-write and the pod runs as bigbluebutton (998), the owner of the
+# presentation directories bbb-web creates (the package unit runs it as User=bigbluebutton).
+# No listening port: it is a Redis consumer, so no Service.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -70,14 +73,19 @@ spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
       imagePullSecrets:
         - name: {{ .Values.imagePullSecret }}
+      # No fsGroup: it would chown the whole bbb-data volume on every start.
       securityContext:
-        runAsUser: 1000
-        runAsGroup: 1000
+        runAsUser: 998
+        runAsGroup: 998
       containers:
         - name: bbb-export-annotations
           image: {{ include "bbb.image" (dict "root" . "name" "export-annotations" "tag" .Values.exportAnnotations.tag) }}
           # No port and no health endpoint: the master process is the container's main process, so a
           # crash exits the container and the Deployment restarts it (no probe, which would need procps).
+          env:
+            # uid 998 has no home in the image; fontconfig (cairosvg) keeps its cache there.
+            - name: HOME
+              value: /tmp
           resources:
             {{- toYaml .Values.exportAnnotations.resources | nindent 12 }}
           volumeMounts:
@@ -86,7 +94,6 @@ spec:
               subPath: settings.json
             - name: data
               mountPath: /var/bigbluebutton
-              readOnly: true
             - name: dropbox
               mountPath: /tmp/pres-ann-dropbox
       volumes:

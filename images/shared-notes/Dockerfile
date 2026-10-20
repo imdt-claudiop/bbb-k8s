@@ -17,6 +17,9 @@ ARG SOURCE_SHA=unknown
 LABEL org.opencontainers.image.source="https://github.com/imdt-claudiop/bbb-k8s" \
       org.opencontainers.image.description="BigBlueButton 4.1 shared notes server" \
       org.bigbluebutton.source-sha="${SOURCE_SHA}"
+# wkhtmltopdf renders the PDF export (a dependency of the package, opts-noble.sh).
+RUN apt-get update && apt-get install -y --no-install-recommends wkhtmltopdf \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /usr/share/bbb-shared-notes-server
 COPY --from=build /src/dist/ ./
 COPY --from=build /src/node_modules ./node_modules

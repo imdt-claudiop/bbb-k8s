@@ -200,6 +200,22 @@ filtered.
   polls.json, external_videos.json, webcams.mp4) and gets 404s; this likely matches a package
   install without those features, but was not compared against one.
 
+## How shared notes and the annotation export are wired
+
+- **bbb-shared-notes** converts a notes PDF export with `wkhtmltopdf`, installed in the image
+  (a dependency of the package). The package runs it through `run-in-systemd.sh`, a transient
+  systemd user unit with a timeout, memory limits and sandboxing; there is no systemd in a
+  container, so `commandExecution.runnerScript` is `/usr/bin/timeout`, which takes the same
+  arguments. The conversion keeps the timeout and is bounded by the pod's memory limit
+  instead; the extra sandboxing of the unit (private network, read-only system) is lost.
+  The same path serves the "Export to PDF" of the notes panel and the notes captured from a
+  breakout room into the parent meeting.
+- **bbb-export-annotations** writes the merged PDF into the presentation directory on
+  `bbb-data` (`<presLocation>/pdfs/<jobId>`) and then uploads it to bbb-web. It mounts the
+  volume read-write and runs as `bigbluebutton` (uid/gid 998), the owner of the directories
+  bbb-web creates, like the package unit. Its jobs are the whiteboard captured from a
+  breakout room and the presentation exports.
+
 ## How the GraphQL stack is wired
 
 - **Hasura** runs the Community Edition engine the `bbb-graphql-server` package installs (the
