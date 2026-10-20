@@ -1,0 +1,105 @@
+{{- /* The package's bigbluebutton.yml with the cluster wiring. Several rap scripts read this file
+       directly instead of the recording.yml override (spec PR candidate 1), so the full merged
+       file is mounted over it, and also as the override. */}}
+{{- $config := .Files.Get "files/bigbluebutton.yml" | fromYaml }}
+{{- $wiring := dict
+      "redis_host" "redis"
+      "playback_host" (include "bbb.publicHost" .)
+      "bn_notes_endpoint" "http://shared-notes:8787/loopback/api/documents" }}
+{{- $config = mergeOverwrite $config $wiring (deepCopy .Values.recording.config) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: recording-config
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+data:
+  bigbluebutton.yml: |
+    {{- toYaml $config | nindent 4 }}
+---
+# Recording processing (spec section 4): one pod, two containers - rap-starter watches the
+# status files bbb-web writes and enqueues jobs; the resque workers archive, process and
+# publish. Both need the two volumes of the storage node (the inotify trigger works only on the
+# same filesystem, spec D2).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recording
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- include "bbb.selector" "recording" | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "bbb.selector" "recording" | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.selector" "recording" | nindent 8 }}
+      annotations:
+        bbb-k8s/config-sha: {{ toYaml $config | sha256sum | trunc 16 | quote }}
+    spec:
+      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      securityContext:
+        runAsUser: 998
+        runAsGroup: 998
+        fsGroup: 998
+      initContainers:
+        {{- include "bbb.waitRedis" . | nindent 8 }}
+      containers:
+        {{- range $c := list (dict "name" "rap-starter" "res" "rapStarter" "args" (list "bundle" "exec" "ruby" "rap-starter.rb"))
+                             (dict "name" "resque-worker" "res" "resqueWorker" "args" (list "bundle" "exec" "rake" "-f" "Rakefile" "resque:workers")) }}
+        - name: {{ $c.name }}
+          image: {{ include "bbb.image" (dict "root" $ "name" "recording" "tag" $.Values.recording.tag) }}
+          args: {{ toJson $c.args }}
+          env:
+            - name: SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.secrets.salt }}
+                  key: security-salt
+            {{- if eq $c.name "resque-worker" }}
+            # bbb-rap-resque-worker.service
+            - name: QUEUE
+              value: rap:archive,rap:publish,rap:process,rap:sanity,rap:captions,rap:events
+            - name: COUNT
+              value: "1"
+            {{- end }}
+          resources:
+            {{- toYaml (index $.Values.recording.resources $c.res) | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/bigbluebutton
+            - name: recordings
+              mountPath: /var/lib/bbb-webrtc-recorder
+            - name: config
+              mountPath: /usr/local/bigbluebutton/core/scripts/bigbluebutton.yml
+              subPath: bigbluebutton.yml
+            - name: config
+              mountPath: /etc/bigbluebutton/recording/recording.yml
+              subPath: bigbluebutton.yml
+            - name: logs
+              mountPath: /var/log/bigbluebutton
+            - name: tmp
+              mountPath: /tmp
+        {{- end }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: bbb-data
+        - name: recordings
+          persistentVolumeClaim:
+            claimName: bbb-recorder
+        - name: config
+          configMap:
+            name: recording-config
+        - name: logs
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

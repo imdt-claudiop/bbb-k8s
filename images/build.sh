@@ -3,7 +3,7 @@
 #
 # Usage: images/build.sh <component>...
 #   components: akka-apps bootstrap hasura hasura-metadata graphql-middleware graphql-actions
-#               bbb-web nginx webrtc-sfu webrtc-recorder
+#               bbb-web nginx webrtc-sfu webrtc-recorder recording
 #
 # Env:
 #   BBB_REPO   path to a bigbluebutton monorepo clone (required unless SRC_DIR is set)
@@ -37,7 +37,15 @@ if [ -z "${SRC_DIR:-}" ]; then
     bbb-graphql-middleware bbb-graphql-actions \
     bbb-common-web bigbluebutton-web bigbluebutton-html5 bbb-learning-dashboard bigbluebutton-config \
     build/packages-template bbb-webrtc-sfu.placeholder.sh bbb-webrtc-recorder.placeholder.sh \
+    bbb-playback.placeholder.sh record-and-playback \
     bigbluebutton-html5/private/config/settings.yml | tar -x -C "$SRC_DIR"
+fi
+
+# The presentation player (bbb-playback) lives in its own repository; the nginx image builds it
+# from the tag the monorepo placeholder pins.
+if [ ! -d "$SRC_DIR/bbb-playback" ] && [ -f "$SRC_DIR/bbb-playback.placeholder.sh" ]; then
+  pb_tag=$(grep -o -- '--branch [^ ]*' "$SRC_DIR/bbb-playback.placeholder.sh" | cut -d' ' -f2)
+  git clone -q --depth 1 --branch "$pb_tag" https://github.com/bigbluebutton/bbb-playback "$SRC_DIR/bbb-playback"
 fi
 
 # set_value <section> <key> <value>: rewrite "  key: ..." inside the top-level "section:" block.
@@ -96,6 +104,11 @@ for c in "$@"; do
       cp "$SRC_DIR/build/packages-template/bbb-livekit/livekit.yaml" "$ROOT/chart/files/livekit.yaml"
       ;;
     webrtc-recorder) set_value webrtcRecorder tag "$TAG" ;;
+    recording)
+      set_value recording tag "$TAG"
+      # The recording config is the package's bigbluebutton.yml plus the chart's overrides.
+      cp "$SRC_DIR/record-and-playback/core/scripts/bigbluebutton.yml" "$ROOT/chart/files/bigbluebutton.yml"
+      ;;
   esac
 done
 if [ "$PUSH" = 1 ]; then echo ">> chart/values.yaml updated (tag $TAG)"; fi

@@ -24,6 +24,16 @@ COPY --from=src bbb-learning-dashboard /src/bbb-learning-dashboard
 # Same steps as build/packages-template/bbb-learning-dashboard/build.sh.
 RUN cd /src/bbb-learning-dashboard && npm ci && npm run build
 
+FROM ${BUILDER_IMAGE} AS playback
+COPY --from=src bbb-playback /src/bbb-playback
+# Same steps as build/packages-template/bbb-playback/build.sh (the player of the presentation
+# recording format, served at /playback/presentation/2.3). The package's jq edit of
+# src/config.json is skipped: that file no longer exists at the pinned tag (the config is
+# src/config.js), so the package step changes nothing either.
+RUN cd /src/bbb-playback \
+    && npm install && npm run-script build \
+    && grep '"version":' package.json | sed -e 's|.* "||g' -e 's|".*||g' > build/bbb-playback-version
+
 FROM ${BUILDER_IMAGE} AS fragments
 # The package nginx fragments of the pinned commit, with the loopback upstreams of a single-host
 # install replaced by the Service names of this chart (the 8185 Hasura load balancer of
@@ -38,6 +48,8 @@ COPY --from=src bbb-learning-dashboard/learning-dashboard.nginx /f/learning-dash
 COPY --from=src build/packages-template/bbb-config/plugins-assets-cors.nginx /f/plugins-assets-cors.nginx
 COPY --from=src build/packages-template/bbb-livekit/livekit.nginx /f/livekit.nginx
 COPY --from=src build/packages-template/bbb-webrtc-sfu/webrtc-sfu.nginx /f/webrtc-sfu.nginx
+COPY --from=src build/packages-template/bbb-playback/playback.nginx /f/playback.nginx
+COPY --from=src record-and-playback/presentation/scripts/presentation.nginx /f/presentation.nginx
 RUN sed -i -e 's|http://127.0.0.1:8090|http://bbb-web:8090|g' \
            -e 's|http://127.0.0.1:8378|http://gql-middleware:8378|g' \
            -e 's|http://127.0.0.1:8185|http://hasura:8085|g' \
@@ -53,11 +65,14 @@ LABEL org.opencontainers.image.source="https://github.com/imdt-claudiop/bbb-k8s"
 USER root
 COPY --from=html5 /src/bigbluebutton-html5/dist /usr/share/bigbluebutton/html5-client
 COPY --from=dashboard /src/bbb-learning-dashboard/build /opt/learning-dashboard
+# Installed by the packages under /var/bigbluebutton, i.e. inside the bbb-data volume: an init
+# container copies them there.
+COPY --from=playback /src/bbb-playback/build /opt/playback/presentation/2.3
 COPY --from=src bigbluebutton-config/assets /var/www/bigbluebutton-default/assets
 COPY --from=fragments /f/conf.d/ /etc/nginx/conf.d/
 COPY --from=fragments /f/*.nginx /f/bbb-html5.nginx.static /usr/share/bigbluebutton/nginx/
 # bbb-config's postinst raises worker_connections to 10000; the server block comes from the chart.
 RUN sed -i 's/worker_connections .*/worker_connections 10000;/' /etc/nginx/nginx.conf \
     && rm -f /etc/nginx/conf.d/default.conf \
-    && chmod -R a+rX /usr/share/bigbluebutton /var/www/bigbluebutton-default /opt/learning-dashboard
+    && chmod -R a+rX /usr/share/bigbluebutton /var/www/bigbluebutton-default /opt/learning-dashboard /opt/playback
 USER 998:998

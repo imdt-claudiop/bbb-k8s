@@ -6,3 +6,11 @@ livekit:
   # ExternalIP of the node labelled bbb-k8s/role=media (temp-hackweek-3b3nqq). A replaced node
   # gets a new IP: update it.
   nodeIP: 142.93.115.37
+  config:
+    rtc:
+      # Announce only the media node's public IP and its VPC address (the recorder's path);
+      # not the DO anchor, Cilium or CGNAT addresses the node also has.
+      ips:
+        includes:
+          - 142.93.115.37/32
+          - 10.116.0.0/20

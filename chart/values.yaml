@@ -108,7 +108,7 @@ bbbWeb:
     limits: { cpu: "2", memory: 3Gi }
 
 nginx:
-  tag: "4.1-66b0bb09-s5a"
+  tag: "4.1-66b0bb09-s6a"
   tlsSecret: bbb-tls  # kubernetes.io/tls, created by scripts/create-secrets.sh
   # Public entry point: a DigitalOcean LoadBalancer in TCP mode in front of this nginx, which
   # terminates TLS itself (docs/install.md, "Public entry point").
@@ -141,6 +141,12 @@ livekit:
       # blocked. See docs/install.md "What the DOKS firewall lets through".
       tcp_port: 443
       allow_tcp_fallback: true
+      # Pods cannot reach a node's public IP (measured: TCP to the media node's public IP times
+      # out from any pod, its VPC IP answers), and bbb-webrtc-recorder joins rooms from inside
+      # the cluster. With use_external_ip LiveKit maps the public interface through STUN and
+      # keeps the VPC address as a host candidate, which the recorder can use; external
+      # clients still get the public one. node_ip stays as the fallback.
+      use_external_ip: true
   resources:
     requests: { cpu: "1", memory: 512Mi }
     limits: { cpu: "2", memory: 2Gi }
@@ -159,3 +165,18 @@ webrtcRecorder:
   resources:
     requests: { cpu: 250m, memory: 256Mi }
     limits: { cpu: "1", memory: 1Gi }
+
+# --- Recording (record-and-playback: rap-starter + resque workers, presentation format) -------
+recording:
+  tag: "4.1-66b0bb09-s6b"
+  # Overrides merged over the package's bigbluebutton.yml (chart/files/bigbluebutton.yml).
+  config: {}
+  # Spec 3.3: 1 CPU / 1 Gi requested for the pod, ffmpeg bursts up to 3 CPU / 3 Gi. The storage
+  # node also runs bbb-web, nginx and the recorder, so the requests are sized to fit beside them.
+  resources:
+    rapStarter:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+    resqueWorker:
+      requests: { cpu: 750m, memory: 896Mi }
+      limits: { cpu: "3", memory: 3Gi }

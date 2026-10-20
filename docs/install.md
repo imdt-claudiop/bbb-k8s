@@ -4,7 +4,8 @@ This installs the BigBlueButton 4.1 services built so far, in dependency order: 
 Redis, the database bootstrap Job, akka-apps, then the GraphQL stack (Hasura with its metadata
 Job, graphql-actions, graphql-middleware), then bbb-web and the front nginx with the html5
 client and the learning dashboard, the public HTTPS entry point, and the media path: LiveKit,
-bbb-webrtc-sfu (LiveKit module only) and bbb-webrtc-recorder. Recording processing comes next.
+bbb-webrtc-sfu (LiveKit module only) and bbb-webrtc-recorder, and the recording processing with
+playback (presentation format).
 
 ## Prerequisites
 
@@ -25,8 +26,8 @@ kubectl label node <node> bbb-k8s/role=data
 ```
 
 Postgres and Hasura run on `data`; Redis, akka-apps, graphql-actions and graphql-middleware on
-`control`; bbb-web, the front nginx and bbb-webrtc-recorder on `storage`, where the `bbb-data`
-and `bbb-recorder` volumes are attached; livekit-server (host network) and bbb-webrtc-sfu on
+`control`; bbb-web, the front nginx, bbb-webrtc-recorder and the recording processing on
+`storage`, where the `bbb-data` and `bbb-recorder` volumes are attached; livekit-server (host network) and bbb-webrtc-sfu on
 `media`. Labels set with
 `kubectl label` are lost when the managed cluster replaces a node (upgrade, pool change):
 re-apply them, or set them as node pool labels in the cloud provider.
@@ -118,8 +119,11 @@ client always uses `https`/`wss` on port 443 of the page's host.
   requests of akka-apps, turns LiveKit webhooks into voice/camera/screen events and drives the
   recorder. Without the mediasoup modules it logs "Reconnecting to MCS" every 2 seconds (spec
   L11); that is expected.
-- **bbb-webrtc-recorder** is deployed and connected (Redis, LiveKit); recording is exercised
-  with the recording processing.
+- **bbb-webrtc-recorder** joins the LiveKit room of a recorded meeting as a WebRTC client and
+  writes each track under `/var/lib/bbb-webrtc-recorder` (`bbb-recorder` volume). Pods cannot
+  reach a node's public IP, so LiveKit runs with `use_external_ip` (STUN maps the public
+  interface) and announces the media node's VPC address too, restricted per cluster with
+  `livekit.config.rtc.ips.includes`; the recorder connects over UDP to that VPC address.
 - Images: the SFU and the recorder are built from their upstream repositories at the tags the
   monorepo placeholders pin, with their own Dockerfiles (`images/webrtc-*/upstream`).
 
@@ -148,6 +152,32 @@ recorder to 7880; LiveKit to Redis and to the SFU webhook; the recorder to the m
 Policies do not protect a host-network pod itself: any pod in the cluster can open LiveKit's
 port 7880 (its API still needs a token signed with the secret). From the internet 7880 is
 filtered.
+
+## Recording and playback
+
+- **Pipeline**: bbb-web writes `recording/status/recorded/<id>.done` on `bbb-data` when a
+  recorded meeting ends; `rap-starter` sees it (inotify, same filesystem) and enqueues the
+  archive job in Redis; the resque workers run archive (events from Redis, audio from the
+  recorder volume, which archive then deletes), sanity, captions, process and publish of the
+  presentation format into `/var/bigbluebutton/published/presentation/<id>`. getRecordings
+  (bbb-web) reads the published metadata.
+- **One pod, two containers** (`recording`): `rap-starter` and `resque-worker`, from the
+  `recording` image (record-and-playback core + presentation scripts of the pinned commit on
+  Ubuntu 24.04, mkclean built from source). The config is the package's `bigbluebutton.yml`
+  (`chart/files/bigbluebutton.yml`) merged with Redis, `playback_host` = `publicHost` and the
+  notes endpoint; it is mounted over the scripts' file and as the `recording.yml` override,
+  because several scripts read the scripts' file directly.
+- **Logs**: the worker and rap-starter log to stdout (the package logs to journald, which a
+  container does not have: the image swaps that one line). The stage scripts keep their own
+  files in `/var/log/bigbluebutton` (an emptyDir), e.g. `archive-<id>.log`,
+  `presentation/process-<id>.log`: `kubectl -n bbb exec deploy/recording -c resque-worker -- ls /var/log/bigbluebutton`.
+- **Playback**: the nginx image builds bbb-playback at the tag the monorepo pins and copies it
+  to `/var/bigbluebutton/playback/presentation/2.3` (where the package installs it) with an init
+  container; `/presentation/<id>` serves the published files from `bbb-data`.
+- **Scope**: presentation only (spec L7). No caption inbox (L8). No shared notes service, so
+  recordings have no notes (L6); the archive step only warns when a meeting had notes. The
+  player asks for optional files that this format does not produce here (notes.html,
+  polls.json, external_videos.json, webcams.mp4): 404 on a package install too.
 
 ## How the GraphQL stack is wired
 

@@ -83,7 +83,7 @@ spec:
       "ingress" (list (list 5432 (list "bootstrap" "akka-apps" "hasura" "hasura-metadata")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "redis"
       "ingress" (list (list 6379 (list "akka-apps" "gql-actions" "gql-middleware" "bbb-web"
-                                       "bbb-webrtc-sfu" "bbb-webrtc-recorder")))) }}
+                                       "bbb-webrtc-sfu" "bbb-webrtc-recorder" "recording")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "bootstrap"
       "egress" (list (list 5432 (list "postgres")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "akka-apps"
@@ -163,6 +163,8 @@ spec:
       "ingress" (list (list 3008 (list "bbb-nginx")))
       "egress" (list (list 6379 (list "redis")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "bbb-webrtc-recorder"
+      "egress" (list (list 6379 (list "redis")))) }}
+{{- include "bbb.netpol" (dict "root" . "name" "recording"
       "egress" (list (list 6379 (list "redis")))) }}
 ---
 # livekit-server runs with hostNetwork, so it carries the node identity and plain NetworkPolicy

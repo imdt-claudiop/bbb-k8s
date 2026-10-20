@@ -98,10 +98,18 @@ spec:
         fsGroup: 998
       initContainers:
         # The learning dashboard app lives next to the per-meeting data bbb-web writes in
-        # /var/bigbluebutton/learning-dashboard (spec section 4): copy the app of this image there.
+        # /var/bigbluebutton/learning-dashboard (spec section 4), and the presentation player is
+        # installed by its package in /var/bigbluebutton/playback: copy both from this image.
         - name: copy-dashboard
           image: {{ include "bbb.image" (dict "root" . "name" "nginx" "tag" .Values.nginx.tag) }}
-          command: ["sh", "-c", "mkdir -p /var/bigbluebutton/learning-dashboard && cp -r /opt/learning-dashboard/. /var/bigbluebutton/learning-dashboard/"]
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /var/bigbluebutton/learning-dashboard /var/bigbluebutton/playback/presentation/2.3
+              cp -r /opt/learning-dashboard/. /var/bigbluebutton/learning-dashboard/
+              rm -rf /var/bigbluebutton/playback/presentation/2.3/*
+              cp -r /opt/playback/presentation/2.3/. /var/bigbluebutton/playback/presentation/2.3/
           volumeMounts:
             - name: data
               mountPath: /var/bigbluebutton

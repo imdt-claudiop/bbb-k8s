@@ -16,7 +16,8 @@ itself go upstream as pull requests; this repository only holds the packaging.
 
 Current state: Postgres, Redis, the database bootstrap Job, akka-apps, the GraphQL stack
 (Hasura, graphql-actions, graphql-middleware), bbb-web and the front nginx with the html5
-client, published through a DigitalOcean LoadBalancer, and audio through LiveKit. See
+client, published through a DigitalOcean LoadBalancer, audio through LiveKit, and recording
+with playback (presentation format). See
 [docs/install.md](docs/install.md).
 
 ## Building images
