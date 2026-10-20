@@ -136,9 +136,9 @@ livekit:
   # Overrides merged over the package's livekit.yaml (chart/files/livekit.yaml).
   config:
     rtc:
-      # The DOKS worker firewall drops all inbound UDP and only admits TCP 80/443 (measured,
-      # docs/install.md "Media"): WebRTC media goes over ICE-TCP on 443 of the media node. The
-      # UDP range of the package stays configured and takes over once the firewall opens it.
+      # Media reaches the node over UDP 16384-32768 for most clients (ICE opens the path; the
+      # DO firewall is stateful) and falls back to ICE-TCP on 443 for clients whose UDP is
+      # blocked. See docs/install.md "What the DOKS firewall lets through".
       tcp_port: 443
       allow_tcp_fallback: true
   resources:

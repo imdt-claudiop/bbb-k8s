@@ -63,8 +63,9 @@ bbb-bootstrap-{{ printf "%s%s" .Values.bootstrap.schemaSha .Values.bootstrap.tag
 
 {{/* initContainer: wait until Redis answers. Several services exit (or panic) when their first
      Redis connection fails, and the headless Service has no DNS record until Redis is ready. A
-     single answer is not enough: a lookup made before that is cached as "no such host" by one
-     of the CoreDNS replicas for a few seconds, so require answers spanning 10 seconds. */}}
+     single answer is not enough: lookups made before Redis was ready kept failing with "no such
+     host" for a few seconds afterwards (likely CoreDNS negative caching, not confirmed), so
+     require answers spanning 10 seconds. */}}
 {{- define "bbb.waitRedis" -}}
 - name: wait-redis
   image: {{ .Values.redis.image }}
