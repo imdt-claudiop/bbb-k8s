@@ -177,7 +177,8 @@ filtered.
 - **Scope**: presentation only (spec L7). No caption inbox (L8). No shared notes service, so
   recordings have no notes (L6); the archive step only warns when a meeting had notes. The
   player asks for optional files that this format does not produce here (notes.html,
-  polls.json, external_videos.json, webcams.mp4): 404 on a package install too.
+  polls.json, external_videos.json, webcams.mp4) and gets 404s; this likely matches a package
+  install without those features, but was not compared against one.
 
 ## How the GraphQL stack is wired
 
