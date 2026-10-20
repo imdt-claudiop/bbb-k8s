@@ -62,9 +62,19 @@ bbb-bootstrap-{{ printf "%s%s" .Values.bootstrap.schemaSha .Values.bootstrap.tag
 {{- end }}
 
 {{/* initContainer: wait until Redis answers. Several services exit (or panic) when their first
-     Redis connection fails, and the headless Service has no DNS record until Redis is ready. */}}
+     Redis connection fails, and the headless Service has no DNS record until Redis is ready. A
+     single answer is not enough: a lookup made before that is cached as "no such host" by one
+     of the CoreDNS replicas for a few seconds, so require answers spanning 10 seconds. */}}
 {{- define "bbb.waitRedis" -}}
 - name: wait-redis
   image: {{ .Values.redis.image }}
-  command: ["sh", "-c", "until [ \"$(redis-cli -h redis ping 2>/dev/null)\" = PONG ]; do echo waiting for redis; sleep 2; done"]
+  command:
+    - sh
+    - -c
+    - |
+      ok=0
+      while [ "$ok" -lt 6 ]; do
+        if [ "$(redis-cli -h redis ping 2>/dev/null)" = PONG ]; then ok=$((ok + 1)); else ok=0; echo waiting for redis; fi
+        sleep 2
+      done
 {{- end }}
