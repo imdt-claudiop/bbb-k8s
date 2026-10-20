@@ -1,0 +1,46 @@
+# Static checks of the chart and the shell scripts: the chart must lint, render to manifests the
+# Kubernetes API accepts (Cilium and Prometheus Operator CRDs included) and pass kube-linter's
+# default checks. Nothing here needs a cluster; `helm test` (docs/install.md "Checking an
+# install") covers a running one.
+name: chart
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.3.1
+      - name: helm lint
+        run: helm lint --strict chart -n bbb -f clusters/doks-hackweek.yaml
+      - name: render
+        run: |
+          mkdir -p out
+          # As installed, plus the PodMonitors that the Prometheus Operator CRDs enable.
+          helm template bbb chart -n bbb -f clusters/doks-hackweek.yaml \
+            --api-versions monitoring.coreos.com/v1/PodMonitor > out/default.yaml
+          # The read-only root filesystem experiment (podSecurity.readOnlyRootFilesystem).
+          helm template bbb chart -n bbb -f clusters/doks-hackweek.yaml \
+            --set podSecurity.readOnlyRootFilesystem=true > out/read-only.yaml
+      - name: kubeconform
+        run: |
+          docker run --rm -v "$PWD/out:/out:ro" ghcr.io/yannh/kubeconform:v0.7.0 -strict -summary \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            /out/default.yaml /out/read-only.yaml
+      - name: kube-linter
+        run: |
+          # The default render keeps the root filesystems writable on purpose (podSecurity in
+          # chart/values.yaml); the read-only render has to pass every default check.
+          docker run --rm -v "$PWD/out:/out:ro" stackrox/kube-linter:v0.7.2 lint --exclude no-read-only-root-fs /out/default.yaml
+          docker run --rm -v "$PWD/out:/out:ro" stackrox/kube-linter:v0.7.2 lint /out/read-only.yaml
+      - name: shellcheck
+        run: |
+          docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.10.0 \
+            scripts/*.sh images/build.sh images/*/*.sh chart/scripts/*.sh
