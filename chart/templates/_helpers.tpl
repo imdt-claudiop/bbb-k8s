@@ -60,3 +60,11 @@ bbb-bootstrap-{{ printf "%s%s" .Values.bootstrap.schemaSha .Values.bootstrap.tag
 {{- define "bbb.publicHost" -}}
 {{ required "publicHost is empty: set it per cluster (clusters/<name>.yaml, scripts/public-host.sh)" .Values.publicHost }}
 {{- end }}
+
+{{/* initContainer: wait until Redis answers. Several services exit (or panic) when their first
+     Redis connection fails, and the headless Service has no DNS record until Redis is ready. */}}
+{{- define "bbb.waitRedis" -}}
+- name: wait-redis
+  image: {{ .Values.redis.image }}
+  command: ["sh", "-c", "until [ \"$(redis-cli -h redis ping 2>/dev/null)\" = PONG ]; do echo waiting for redis; sleep 2; done"]
+{{- end }}

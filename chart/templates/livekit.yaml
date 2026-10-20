@@ -61,6 +61,9 @@ spec:
       # The Service named livekit would inject LIVEKIT_PORT=tcp://... (service links), which
       # livekit-server reads as its --port flag and refuses to start.
       enableServiceLinks: false
+      initContainers:
+        # livekit-server exits when Redis is not resolvable yet (fresh install).
+        {{- include "bbb.waitRedis" . | nindent 8 }}
       containers:
         - name: livekit
           image: {{ .Values.livekit.image }}

@@ -66,9 +66,7 @@ spec:
         # (internal/websrv/rediscli.go), so a start before Redis answers ends in a panic and a
         # crash loop. Start it only once Redis replies. A later Redis restart still crashes it
         # until Redis is back (upstream fix pending; see docs/install.md).
-        - name: wait-redis
-          image: {{ .Values.redis.image }}
-          command: ["sh", "-c", "until [ \"$(redis-cli -h redis ping 2>/dev/null)\" = PONG ]; do echo waiting for redis; sleep 2; done"]
+        {{- include "bbb.waitRedis" . | nindent 8 }}
       containers:
         - name: gql-middleware
           image: {{ include "bbb.image" (dict "root" . "name" "graphql-middleware" "tag" .Values.graphqlMiddleware.tag) }}
