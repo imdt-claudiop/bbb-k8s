@@ -9,28 +9,45 @@ playback (presentation format).
 
 ## Prerequisites
 
-- `kubectl` and `helm` (v3) pointing at the cluster.
+- `kubectl` and `helm` (v3 or v4) pointing at the cluster.
 - A storage class named `do-block-storage-retain` (DigitalOcean Kubernetes ships it), or set
   `postgres.storageClass` / `redis.storageClass`.
 - A token that can read the bbb-k8s packages on ghcr.io (`read:packages`).
 
 ### Node roles
 
-Workloads are placed by node role (spec D1). Label one node per role; roles can share a node.
+Workloads are placed by node role (spec D1), a `nodeSelector` on `bbb-k8s/role=<role>`.
+Postgres, Hasura and the bootstrap and metadata Jobs run on `data`; Redis, akka-apps,
+graphql-actions and graphql-middleware on `control`; bbb-web, the front nginx,
+bbb-webrtc-recorder, the recording processing and its cleanup CronJob on `storage`, where the
+`bbb-data` and `bbb-recorder` volumes are attached; livekit-server (host network) and
+bbb-webrtc-sfu on `media`.
+
+Set the roles as **node pool labels**, one pool per role: DOKS puts a pool's labels on every node
+it creates for the pool (upgrade, repair, resize), while a label set with `kubectl label` is lost
+with its node and leaves that role's pods Pending.
 
 ```bash
-kubectl label node <node> bbb-k8s/role=storage
-kubectl label node <node> bbb-k8s/role=media
-kubectl label node <node> bbb-k8s/role=control
-kubectl label node <node> bbb-k8s/role=data
+doctl kubernetes cluster node-pool create <cluster> --name media --size s-4vcpu-8gb --count 1 \
+  --label bbb-k8s/role=media --taint bbb-k8s/role=media:NoSchedule
+doctl kubernetes cluster node-pool create <cluster> --name storage --size s-4vcpu-8gb --count 1 \
+  --label bbb-k8s/role=storage
+# the same for control and data
 ```
 
-Postgres and Hasura run on `data`; Redis, akka-apps, graphql-actions and graphql-middleware on
-`control`; bbb-web, the front nginx, bbb-webrtc-recorder and the recording processing on
-`storage`, where the `bbb-data` and `bbb-recorder` volumes are attached; livekit-server (host network) and bbb-webrtc-sfu on
-`media`. Labels set with
-`kubectl label` are lost when the managed cluster replaces a node (upgrade, pool change):
-re-apply them, or set them as node pool labels in the cloud provider.
+- Every pod tolerates the `NoSchedule` taint of its own role, so tainting a pool keeps everything
+  else off it. The media pool is the one worth tainting: CoreDNS, the Jobs or a monitoring stack
+  then never compete with LiveKit for CPU.
+- `doctl kubernetes cluster node-pool update` replaces the whole label and taint set of a pool:
+  pass all of them every time.
+- Roles can share a node: point several roles at one label value in the values (for example
+  `postgres.role: control`).
+- On a cluster without pools per role, `kubectl label node <node> bbb-k8s/role=<role>` works,
+  but has to be repeated whenever DOKS replaces the node.
+
+The pods of `storage` follow the two RWO volumes to one node by pod affinity (label
+`bbb-k8s/volume-group: bbb-data`), not only by the node label: a second `storage` node does not
+split them across nodes, where the late ones would hang on a Multi-Attach error.
 
 ## Install
 
@@ -64,7 +81,34 @@ time).
 
 **Always pass `--reset-values` (or your own `-f values.yaml`) to `helm upgrade`.** A plain
 `helm upgrade` with no values flags reuses the values of the previous release, so a one-off
-`--set` (for example a wrong `bootstrap.schemaSha`) silently stays in place.
+`--set` (for example a wrong `bootstrap.schemaSha`) silently stays in place. `values.schema.json`
+rejects unknown keys, so a misspelled key in a cluster file fails the render instead of being
+ignored.
+
+After the first install, keep the load balancer across reinstalls ("Keeping the public IP"
+below) and every later install is a single `helm upgrade --install`.
+
+### Checking an install
+
+```bash
+helm test bbb -n bbb
+kubectl -n bbb logs api-smoke     # the steps, ok or FAIL
+```
+
+The test pod calls the API the way an integration does, through the public host and signed with
+the shared secret: `create`, `join`, `getMeetingInfo`, `getRecordings` and `end` must answer
+SUCCESS, and the html5 client and LiveKit signaling (`/livekit/`) must answer through the front
+nginx (`chart/scripts/api-smoke.sh`). A failed pod stays for its log; the next run replaces it.
+
+### Upgrading a release installed with chart 0.1.0
+
+- `svc/redis` and `svc/postgres` were headless and now have a ClusterIP, which Kubernetes does
+  not change in place. Delete both right before the upgrade, which recreates them seconds later
+  (open connections keep working meanwhile): `kubectl -n bbb delete service redis postgres`
+- Every pod template changes once (labels, security settings, probes), so every pod restarts:
+  meetings in progress end. Do it in a maintenance window.
+- The bootstrap and metadata Jobs get new names and run once more; with an unchanged schema they
+  only re-assert roles, grants and the metadata.
 
 ## Public entry point
 
@@ -87,10 +131,32 @@ client always uses `https`/`wss` on port 443 of the page's host.
   resolves a pod's connection to the load balancer IP inside the cluster, so the request
   reaches nginx from the bbb-web pod IP (allowed by the `bbb-web` egress rule).
 - Changing `publicHost` restarts bbb-web (meetings in progress end) and nginx, through the
-  `properties-sha` / `site-sha` pod annotations.
-- Deleting the release or the namespace deletes the load balancer; a new install gets a new
-  IP and therefore a new host (a DigitalOcean reserved IP would keep it, but needs an API
-  token).
+  `config-sha` / `site-sha` pod annotations.
+- Deleting the release or the namespace deletes the load balancer, unless it was kept: a new
+  load balancer gets a new IP and therefore a new host.
+- A renewed certificate is served once nginx restarts: `scripts/create-secrets.sh` restarts it
+  when the certificate in `bbb-tls` changed (meetings survive an nginx restart; clients
+  reconnect).
+
+### Keeping the public IP
+
+The load balancer, its IP and with them the public host live as long as `svc/bbb-nginx`. To
+reinstall from scratch and keep the host:
+
+1. Before deleting the release or the namespace, run `scripts/keep-loadbalancer.sh`. It marks the
+   load balancer as disowned (`service.kubernetes.io/do-loadbalancer-disown: "true"`), so the
+   DigitalOcean cloud controller stops changing it and does not delete it with the Service, and
+   prints its UUID.
+2. Add that UUID to the cluster file, as the annotation
+   `kubernetes.digitalocean.com/load-balancer-id` under `nginx.service.annotations`. The Service
+   of the next install takes that load balancer over: same IP, same `publicHost`, one
+   `helm upgrade --install`.
+
+No API token is involved; the cluster's own cloud controller does the work. A disowned load
+balancer stops following node changes, so reinstall soon after, and delete it in the
+DigitalOcean panel when it is no longer needed. For `helm uninstall` / `helm install` cycles that
+keep the namespace, `nginx.service.keep: true` (`helm.sh/resource-policy: keep`) leaves the
+Service, and so the load balancer, in place.
 
 ## How bbb-web and the front nginx are wired
 
@@ -98,8 +164,17 @@ client always uses `https`/`wss` on port 443 of the page's host.
   listening on 0.0.0.0:8090. `/etc/bigbluebutton/bbb-web.properties` is rendered at start from
   the `bbb-web-config` ConfigMap plus `securitySalt` from `bbb-salt` (`bbbWeb.properties` in
   values adds lines). The conversion wrapper `/usr/share/bbb-web/run-in-systemd.sh`, called by
-  that fixed path, is replaced by a plain `timeout` (no systemd in a container). Office
-  documents are not converted (no LibreOffice, spec L5); PDF and images are.
+  that fixed path, keeps what the package's transient systemd unit does without systemd: the
+  timeout (plus SIGKILL 10 s later), umask 0022, and the 640M memory cap as an address-space
+  limit (`bbbWeb.conversionMemoryMax`). The cap matters more in a pod: on cgroup v2 the kubelet
+  kills every process of a container that passes its memory limit, so an uncapped conversion
+  would take the JVM, and every meeting, down with it. Office documents are not converted (no
+  LibreOffice, spec L5); PDF and images are.
+- bbb-web logs to stdout only (the war's `logback.xml` without its file appender, from the
+  ConfigMap, through `JAVA_OPTS`), and runs with requests equal to limits (Guaranteed QoS): on
+  the storage node it is the last pod the kubelet evicts and the kernel kills when the recording
+  worker's ffmpeg takes memory. Its heap is `bbbWeb.heap`; the rest of the limit is for the
+  conversion tools.
 - **nginx** serves the html5 client and the learning dashboard built from the pinned commit,
   the default assets of bigbluebutton-config, and the package nginx fragments with their
   loopback upstreams rewritten to `bbb-web:8090`, `gql-middleware:8378` and `hasura:8085`. The
@@ -131,10 +206,18 @@ server; api-mate reads it client-side to sign the calls.
 - **livekit-server** runs the upstream image of the version the `bbb-livekit` package builds
   (v1.9.12), with host networking on the `media` node so WebRTC reaches the node's public IP
   directly. Its config is the package's `livekit.yaml` (`chart/files/livekit.yaml`) merged with
-  the cluster wiring (Redis, the SFU webhook, `rtc.node_ip`, the key file) and
-  `livekit.config` from values. `livekit.nodeIP` (per cluster) must be the media node's public
-  IP; a replaced node gets a new IP. The key id is `livekit.apiKey`; the secret is in
-  `bbb-livekit` (`scripts/create-secrets.sh`), mounted as a key file with mode 0440.
+  the cluster wiring (Redis, the SFU webhook, the key file, `prometheus_port`) and
+  `livekit.config` from values. There is no `rtc.node_ip`: with `use_external_ip` LiveKit
+  replaces it with what STUN reports. The key id is `livekit.apiKey`; the secret is in
+  `bbb-livekit` (`scripts/create-secrets.sh`), mounted as a key file with mode 0440. The
+  container runs as root only to bind port 443 of the host and keeps no capability but
+  `NET_BIND_SERVICE`; it has no CPU limit (the media node is its own, and throttling at a limit
+  delays live media).
+- **Announced addresses**: when a cluster restricts them (`livekit.config.rtc.ips.includes`), the
+  media node's own public IP has to be in the list. The init container `config` adds it at pod
+  start: `livekit.nodeIP` if set, otherwise the droplet metadata service (`169.254.169.254`,
+  reachable on the host network). A replaced media node therefore needs no change in the
+  values; if neither source answers, the pod stays in `Init` with a message saying so.
 - **bbb-webrtc-sfu** runs only its LiveKit module (`SFU_MODULES`): it answers the token
   requests of akka-apps, turns LiveKit webhooks into voice/camera/screen events and drives the
   recorder. Without the mediasoup modules it logs "Reconnecting to MCS" every 2 seconds (spec
@@ -143,7 +226,8 @@ server; api-mate reads it client-side to sign the calls.
   writes each track under `/var/lib/bbb-webrtc-recorder` (`bbb-recorder` volume). Pods cannot
   reach a node's public IP, so LiveKit runs with `use_external_ip` (STUN maps the public
   interface) and announces the media node's VPC address too, restricted per cluster with
-  `livekit.config.rtc.ips.includes`; the recorder connects over UDP to that VPC address.
+  `livekit.config.rtc.ips.includes` (the VPC range; the public IP is added at start); the
+  recorder connects over UDP to that VPC address.
 - Images: the SFU and the recorder are built from their upstream repositories at the tags the
   monorepo placeholders pin, with their own Dockerfiles (`images/webrtc-*/upstream`).
 
@@ -173,6 +257,16 @@ Policies do not protect a host-network pod itself: any pod in the cluster can op
 port 7880 (its API still needs a token signed with the secret). From the internet 7880 is
 filtered.
 
+## Outbound calls
+
+The namespace is default-deny in both directions. Besides the flows between the services,
+bbb-web and the recording workers may open TCP 80 and 443 to the internet
+(`externalEgress`), for what an API caller asks of them: presentations passed by URL to `create`
+and `insertDocument`, `meta_endCallbackUrl`, and the recording-ready callback
+(`post_publish_recording_ready_callback.rb`). The private, CGNAT and link-local ranges are
+excluded, so such a URL cannot reach the VPC, the pods or the droplet metadata service. Add the
+port of an integration that listens elsewhere to `externalEgress.ports`.
+
 ## Recording and playback
 
 - **Pipeline**: bbb-web writes `recording/status/recorded/<id>.done` on `bbb-data` when a
@@ -189,8 +283,15 @@ filtered.
   because several scripts read the scripts' file directly.
 - **Logs**: the worker and rap-starter log to stdout (the package logs to journald, which a
   container does not have: the image swaps that one line). The stage scripts keep their own
-  files in `/var/log/bigbluebutton` (an emptyDir), e.g. `archive-<id>.log`,
-  `presentation/process-<id>.log`: `kubectl -n bbb exec deploy/recording -c resque-worker -- ls /var/log/bigbluebutton`.
+  files in `/var/log/bigbluebutton`, which is `log/` on `bbb-data`, so the log of a failed
+  recording survives a pod restart, e.g. `archive-<id>.log`, `presentation/process-<id>.log`:
+  `kubectl -n bbb exec deploy/recording -c resque-worker -- ls /var/log/bigbluebutton`.
+- **Cleanup**: the CronJob `recording-cleanup` runs the steps of the package's daily cron
+  (`bigbluebutton-config/cron.daily/bigbluebutton`) that apply here, with its defaults
+  (`recording.cleanup`): presentations of past meetings and recorder files after 5 days, raw
+  data of meetings without recording marks and of published recordings after 14, recording logs
+  after 28. It runs next to the volumes (`chart/scripts/recording-cleanup.sh`); a run by hand:
+  `kubectl -n bbb create job --from=cronjob/recording-cleanup cleanup-now`.
 - **Playback**: the nginx image builds bbb-playback at the tag the monorepo pins and copies it
   to `/var/bigbluebutton/playback/presentation/2.3` (where the package installs it) with an init
   container; `/presentation/<id>` serves the published files from `bbb-data`.
@@ -211,13 +312,12 @@ filtered.
   commit, with the BigBlueButton source rewritten at build time to read its URL from
   `HASURA_GRAPHQL_BBB_DATABASE_URL` (upstream it is a literal with `127.0.0.1` and a password).
   The Job applies it, reloads, and fails unless Hasura reports the metadata as consistent. Its
-  name is derived from the schema sha, the metadata content sha and the image tag, so a new
-  schema (bootstrap recreates `bbb_graphql`) or new metadata re-runs it.
+  name is the hash of its rendered pod template (schema sha, metadata content sha and image tag
+  included), so a new schema (bootstrap recreates `bbb_graphql`) or new metadata re-runs it.
 - **graphql-middleware** reads `/etc/bigbluebutton/bbb-graphql-middleware.yml` (a ConfigMap)
   over its packaged defaults: Service names instead of loopback, and Hasura directly on
-  `hasura:8085` instead of the package's nginx load balancer on 8185. Its first hook is
-  bbb-web, which arrives in a later slice: until then every client connection is refused with
-  close code 4403.
+  `hasura:8085` instead of the package's nginx load balancer on 8185. A change to that
+  ConfigMap restarts the middleware (`config-sha` annotation); clients reconnect.
 - **graphql-actions** turns client mutations into Redis messages and trusts the session
   variables in the request, so only Hasura and the middleware may reach it.
 
@@ -235,15 +335,56 @@ filtered.
   passwords and grants. The marker is written last.
 - `hasura_app` and `blocknote_app` are created when missing and never dropped;
   `blocknote_schema.sql` is loaded only when `blocknote_app` is created.
-- The Job name is derived from the schema sha and the bootstrap image tag, so an upgrade that
-  changes either one creates a new Job instead of patching an immutable one.
+- The Job name is the hash of its rendered pod template (schema sha and bootstrap image tag
+  included), so an upgrade that changes anything in it creates a new Job instead of patching an
+  immutable one. A retry starts only once the previous pod is gone (`podReplacementPolicy:
+  Failed`), so two bootstraps never run at the same time.
 - akka-apps carries the schema sha as a pod annotation: a new schema recreates akka-apps in the
   same upgrade, after the database. **A schema change ends every meeting in progress**: do it in
   a maintenance window. A bootstrap image bump with the same schema does not restart akka-apps.
 
+## Metrics
+
+The chart exposes what the services publish; the collector is installed once per cluster, for
+example kube-prometheus-stack in the namespace `monitoring` (`metrics.namespace`):
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring \
+  --create-namespace --set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false
+helm upgrade --install bbb chart -n bbb --reset-values -f clusters/<cluster>.yaml   # PodMonitors
+```
+
+- With the Prometheus Operator CRDs present, the chart adds PodMonitors for livekit-server
+  (`prometheus_port` 6789 on the media node, `livekit.prometheusPort`) and graphql-middleware
+  (`/metrics` on 8378), and a NetworkPolicy lets the `monitoring` namespace scrape the
+  middleware. A Prometheus that selects PodMonitors by label needs `metrics.podMonitorLabels`.
+- The kubelet metrics in that stack answer the questions a load test asks: CPU throttling
+  (`container_cpu_cfs_throttled_periods_total`), OOM kills and restarts per container, node
+  memory and disk pressure.
+- The in-process ceilings are values too, so a limit hit shows up on the right component:
+  `akkaApps.heap` (the package's 256m, passed as `-J-Xmx`), `bbbWeb.heap` and
+  `redis.maxmemory` (below the container limit, `noeviction`).
+
+## Pod security
+
+- No pod mounts a ServiceAccount token or gets service-link variables; every pod uses the
+  runtime's default seccomp profile, and every container runs without privilege escalation and
+  drops its capabilities. Postgres and Redis keep the default capabilities minus `NET_RAW` (their
+  entrypoints chown the data directory as root, then drop to their user); livekit-server keeps
+  only `NET_BIND_SERVICE`.
+- The namespace carries `pod-security.kubernetes.io/warn` and `audit` at `restricted`
+  (`scripts/create-secrets.sh`): every apply lists what still does not fit (LiveKit's host
+  network, the root entrypoints) without blocking it.
+- `podSecurity.readOnlyRootFilesystem: true` makes every root filesystem read-only. The chart
+  already mounts the scratch directories it knows of (`/tmp`, nginx's cache, the config and home
+  directories some services write), so what still fails names a path a service writes and loses
+  on every restart. It is off by default and was not run on the cluster yet.
+
 ## Uninstall and cleanup
 
 ```bash
+scripts/keep-loadbalancer.sh      # optional: keep the load balancer, its IP and the host
 helm uninstall bbb -n bbb
 kubectl delete namespace bbb
 ```
@@ -263,13 +404,13 @@ Then confirm in the DigitalOcean panel or with `doctl compute volume list` that 
 
 ## Known limitations of this slice
 
-- akka-apps `/healthz` answers 503 until bbb-web and the GraphQL middleware exist (later
-  slices); the probes are TCP only for that reason.
+- akka-apps `/healthz` answers 503 in its first minute and whenever bbb-web is away, so its
+  probes stay TCP: as liveness a hiccup would end meetings, and as readiness it would take the
+  Hasura auth hook down too. bbb-web and akka-apps get a startup probe instead of a fixed
+  initial delay.
 - One replica per service; restarting akka-apps ends the meetings it holds (spec L1, L2).
 - Camera and screen sharing use the same LiveKit path but are not part of the validated set.
 - The middleware panics whenever a Redis receive fails (`internal/websrv/rediscli.go`
   dereferences the nil message): an init container holds it until Redis answers at start, but
   a Redis restart still makes it crash and restart until Redis is back (observed: 3 restarts,
   then Running). Clients connected through it reconnect.
-- Changing the middleware ConfigMap does not restart the middleware: restart it
-  (`kubectl -n bbb rollout restart deploy/gql-middleware`).

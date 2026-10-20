@@ -11,14 +11,15 @@ itself go upstream as pull requests; this repository only holds the packaging.
 |---|---|
 | `chart/` | Helm chart (`appVersion` = BigBlueButton line) |
 | `images/` | One Dockerfile per component, built from the pinned monorepo commit by `images/build.sh` |
-| `scripts/` | Cluster helpers (`create-secrets.sh`) |
+| `scripts/` | Cluster helpers (`create-secrets.sh`, `public-host.sh`, `keep-loadbalancer.sh`) |
 | `docs/` | Install and operation runbooks |
+| `.github/workflows/` | Static checks: helm lint, kubeconform, kube-linter, shellcheck |
 
 Current state: Postgres, Redis, the database bootstrap Job, akka-apps, the GraphQL stack
 (Hasura, graphql-actions, graphql-middleware), bbb-web and the front nginx with the html5
 client, published through a DigitalOcean LoadBalancer, audio through LiveKit, and recording
-with playback (presentation format). See
-[docs/install.md](docs/install.md).
+with playback (presentation format), cleaned up daily like a package install. `helm test`
+checks an install through the API. See [docs/install.md](docs/install.md).
 
 ## Building images
 
