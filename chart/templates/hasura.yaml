@@ -31,13 +31,15 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.podLabels" . | nindent 8 }}
         {{- include "bbb.selector" "hasura" | nindent 8 }}
       annotations:
         # A new schema recreates bbb_graphql: restart Hasura after it, like akka-apps.
         bbb-k8s/schema-sha: {{ $schemaSha | quote }}
     spec:
-      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.hasura.role) | nindent 6 }}
+      {{- include "bbb.placement" (dict "root" . "role" .Values.hasura.role) | nindent 6 }}
+      {{- include "bbb.podDefaults" . | nindent 6 }}
+      {{- include "bbb.podSecurityContext" (dict "user" 998) | nindent 6 }}
       imagePullSecrets:
         - name: {{ .Values.imagePullSecret }}
       initContainers:
@@ -84,3 +86,9 @@ spec:
             periodSeconds: 20
           resources:
             {{- toYaml .Values.hasura.resources | nindent 12 }}
+          {{- include "bbb.containerSecurity" (dict "root" .) | nindent 10 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        {{- include "bbb.scratch" (dict "name" "tmp" "size" "256Mi") | nindent 8 }}

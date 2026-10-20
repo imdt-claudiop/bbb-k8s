@@ -1,12 +1,21 @@
-{{- $nodeIP := required "livekit.nodeIP is empty: set the media node's public IP per cluster" .Values.livekit.nodeIP }}
-{{- /* The bbb-livekit package config merged with the cluster wiring and the overrides. */}}
+{{- /* The bbb-livekit package config merged with the cluster wiring and the overrides. No
+       rtc.node_ip: with use_external_ip, LiveKit replaces it with what STUN reports. */}}
 {{- $config := .Files.Get "files/livekit.yaml" | fromYaml }}
 {{- $wiring := dict
       "redis" (dict "address" "redis:6379")
       "webhook" (dict "api_key" .Values.livekit.apiKey "urls" (list "http://bbb-webrtc-sfu:3040/livekit-webhook"))
-      "rtc" (dict "node_ip" $nodeIP)
       "key_file" "/etc/livekit/keys/keys.yaml" }}
+{{- if .Values.livekit.prometheusPort }}
+{{- $_ := set $wiring "prometheus_port" (int .Values.livekit.prometheusPort) }}
+{{- end }}
 {{- $config = mergeOverwrite $config $wiring (deepCopy .Values.livekit.config) }}
+{{- /* rtc.ips.includes limits the addresses LiveKit announces; the media node's own public IP
+       has to be one of them, and it is only known on the node: the config init container
+       replaces this placeholder at pod start. */}}
+{{- $includes := dig "rtc" "ips" "includes" (list) $config }}
+{{- if $includes }}
+{{- $_ := set $config.rtc.ips "includes" (append $includes "__NODE_PUBLIC_IP__/32") }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -40,6 +49,10 @@ metadata:
   labels:
     {{- include "bbb.labels" . | nindent 4 }}
     {{- include "bbb.selector" "livekit" | nindent 4 }}
+  annotations:
+    ignore-check.kube-linter.io/host-network: "WebRTC reaches the media node's public IP directly (spec D4)"
+    ignore-check.kube-linter.io/run-as-non-root: "binds ICE-TCP on port 443 of the host"
+    ignore-check.kube-linter.io/unset-cpu-requirements: "no CPU limit on the media node: throttling delays live media"
 spec:
   replicas: 1
   strategy:
@@ -50,27 +63,63 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.podLabels" . | nindent 8 }}
         {{- include "bbb.selector" "livekit" | nindent 8 }}
       annotations:
         bbb-k8s/config-sha: {{ toYaml $config | sha256sum | trunc 16 | quote }}
     spec:
-      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.livekit.role) | nindent 6 }}
+      {{- include "bbb.placement" (dict "root" . "role" .Values.livekit.role) | nindent 6 }}
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-      # The Service named livekit would inject LIVEKIT_PORT=tcp://... (service links), which
+      # Without this, the Service named livekit would inject LIVEKIT_PORT=tcp://..., which
       # livekit-server reads as its --port flag and refuses to start.
-      enableServiceLinks: false
+      {{- include "bbb.podDefaults" . | nindent 6 }}
+      {{- include "bbb.podSecurityContext" (dict) | nindent 6 }}
       initContainers:
         # livekit-server exits when Redis is not resolvable yet (fresh install).
         {{- include "bbb.waitRedis" . | nindent 8 }}
+        # Renders livekit.yaml with the public IPv4 of the node the pod landed on: livekit.nodeIP
+        # if set, otherwise the droplet metadata service, reachable on the host network. A
+        # replaced media node therefore needs no change in the values.
+        - name: config
+          image: {{ .Values.livekit.image }}
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              template=/etc/livekit-template/livekit.yaml
+              ip="$NODE_PUBLIC_IP"
+              if grep -q __NODE_PUBLIC_IP__ "$template"; then
+                [ -n "$ip" ] || ip=$(wget -qO- -T 5 http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address || true)
+                case "$ip" in
+                  ''|*[!0-9.]*) echo "no public IPv4 for this node (got '$ip'): set livekit.nodeIP" >&2; exit 1 ;;
+                esac
+                echo "announcing the public IP $ip"
+              fi
+              sed "s/__NODE_PUBLIC_IP__/$ip/g" "$template" > /etc/livekit/conf/livekit.yaml
+          env:
+            - name: NODE_PUBLIC_IP
+              value: {{ .Values.livekit.nodeIP | quote }}
+          {{- include "bbb.initResources" . | nindent 10 }}
+          {{- include "bbb.containerSecurity" (dict "root" .) | nindent 10 }}
+          volumeMounts:
+            - name: template
+              mountPath: /etc/livekit-template
+              readOnly: true
+            - name: config
+              mountPath: /etc/livekit/conf
       containers:
         - name: livekit
           image: {{ .Values.livekit.image }}
-          args: ["--config", "/etc/livekit/livekit.yaml"]
+          args: ["--config", "/etc/livekit/conf/livekit.yaml"]
           ports:
             - name: http
               containerPort: 7880
+            {{- if .Values.livekit.prometheusPort }}
+            - name: metrics
+              containerPort: {{ .Values.livekit.prometheusPort }}
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /
@@ -83,17 +132,22 @@ spec:
             periodSeconds: 20
           resources:
             {{- toYaml .Values.livekit.resources | nindent 12 }}
+          # Runs as root only to bind ICE-TCP on port 443 of the host: no other capability.
+          {{- include "bbb.containerSecurity" (dict "root" . "add" (list "NET_BIND_SERVICE")) | nindent 10 }}
           volumeMounts:
             - name: config
-              mountPath: /etc/livekit/livekit.yaml
-              subPath: livekit.yaml
+              mountPath: /etc/livekit/conf
+              readOnly: true
             - name: keys
               mountPath: /etc/livekit/keys
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
       volumes:
-        - name: config
+        - name: template
           configMap:
             name: livekit-config
+        {{- include "bbb.scratch" (dict "name" "config" "size" "1Mi") | nindent 8 }}
         - name: keys
           secret:
             secretName: {{ .Values.secrets.livekit }}
@@ -102,3 +156,4 @@ spec:
                 path: keys.yaml
             # livekit-server refuses a key file that others can read (spec D7).
             defaultMode: 0440
+        {{- include "bbb.scratch" (dict "name" "tmp" "size" "256Mi") | nindent 8 }}

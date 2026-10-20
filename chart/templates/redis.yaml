@@ -1,3 +1,7 @@
+# A ClusterIP, not a headless Service: the name resolves before redis-0 is ready and keeps its
+# address when the pod is recreated, which matters for clients that cache resolved addresses
+# (the JVMs). It is also the StatefulSet's serviceName (immutable); nothing uses the per-pod DNS
+# names.
 apiVersion: v1
 kind: Service
 metadata:
@@ -5,7 +9,6 @@ metadata:
   labels:
     {{- include "bbb.labels" . | nindent 4 }}
 spec:
-  clusterIP: None
   selector:
     {{- include "bbb.selector" "redis" | nindent 4 }}
   ports:
@@ -22,6 +25,8 @@ metadata:
   labels:
     {{- include "bbb.labels" . | nindent 4 }}
     {{- include "bbb.selector" "redis" | nindent 4 }}
+  annotations:
+    ignore-check.kube-linter.io/run-as-non-root: "the image entrypoint chowns /data as root, then drops to redis"
 spec:
   serviceName: redis
   replicas: 1
@@ -31,16 +36,17 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.podLabels" . | nindent 8 }}
         {{- include "bbb.selector" "redis" | nindent 8 }}
     spec:
-      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.redis.role) | nindent 6 }}
-      securityContext:
-        fsGroup: 999
+      {{- include "bbb.placement" (dict "root" . "role" .Values.redis.role) | nindent 6 }}
+      {{- include "bbb.podDefaults" . | nindent 6 }}
+      {{- include "bbb.podSecurityContext" (dict "fsGroup" 999) | nindent 6 }}
       containers:
         - name: redis
           image: {{ .Values.redis.image }}
-          args: ["--appendonly", "yes", "--dir", "/data"]
+          args: ["--appendonly", "yes", "--dir", "/data",
+                 "--maxmemory", {{ .Values.redis.maxmemory | quote }}, "--maxmemory-policy", "noeviction"]
           ports:
             - name: redis
               containerPort: 6379
@@ -54,8 +60,10 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 20
           resources:
-            requests: { cpu: 250m, memory: 512Mi }
-            limits: { cpu: 500m, memory: 1Gi }
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+          # The entrypoint runs as root (chown of /data, then gosu), so the default capabilities
+          # stay, minus NET_RAW.
+          {{- include "bbb.containerSecurity" (dict "root" . "drop" (list "NET_RAW")) | nindent 10 }}
           volumeMounts:
             - name: data
               mountPath: /data

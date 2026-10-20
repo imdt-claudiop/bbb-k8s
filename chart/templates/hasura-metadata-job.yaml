@@ -1,42 +1,69 @@
 {{- if not .Values.hasuraMetadata.metadataSha }}{{ fail "hasuraMetadata.metadataSha is empty: run images/build.sh hasura-metadata" }}{{ end }}
-# Applies the BigBlueButton metadata once Hasura is up. Plain resource keyed on the schema, the
-# metadata content and the image tag: a recreated bbb_graphql or new metadata re-runs it, an
-# unchanged release does not.
+{{- define "bbb.hasuraMetadataPod" -}}
+metadata:
+  labels:
+    {{- include "bbb.podLabels" . | nindent 4 }}
+    {{- include "bbb.selector" "hasura-metadata" | nindent 4 }}
+  annotations:
+    # The metadata content: a new metadata with the same image tag re-runs the Job.
+    bbb-k8s/metadata-sha: {{ .Values.hasuraMetadata.metadataSha | quote }}
+spec:
+  restartPolicy: Never
+  {{- include "bbb.placement" (dict "root" . "role" .Values.hasura.role) | nindent 2 }}
+  {{- include "bbb.podDefaults" . | nindent 2 }}
+  {{- include "bbb.podSecurityContext" (dict "user" 998) | nindent 2 }}
+  imagePullSecrets:
+    - name: {{ .Values.imagePullSecret }}
+  initContainers:
+    # Never check consistency while the bootstrap is recreating bbb_graphql.
+    {{- include "bbb.waitBootstrap" (dict "root" . "user" "bbb_hasura" "key" "bbb-hasura-password") | nindent 4 }}
+    # Hasura answers /healthz only after its init container saw the current schema marker.
+    - name: wait-hasura
+      image: {{ include "bbb.image" (dict "root" . "name" "hasura-metadata" "tag" .Values.hasuraMetadata.tag) }}
+      command: ["sh", "-c", "until curl -fsS -o /dev/null http://hasura:8085/healthz; do echo waiting for hasura; sleep 3; done"]
+      {{- include "bbb.initResources" . | nindent 6 }}
+      {{- include "bbb.containerSecurity" (dict "root" .) | nindent 6 }}
+  containers:
+    - name: apply
+      image: {{ include "bbb.image" (dict "root" . "name" "hasura-metadata" "tag" .Values.hasuraMetadata.tag) }}
+      env:
+        - name: HASURA_GRAPHQL_ENABLE_TELEMETRY
+          value: "false"
+        - name: HASURA_ENDPOINT
+          value: http://hasura:8085
+        - name: HASURA_GRAPHQL_ADMIN_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secrets.hasura }}
+              key: admin-secret
+      resources:
+        requests: { cpu: 100m, memory: 128Mi }
+        limits: { cpu: 500m, memory: 512Mi }
+      {{- include "bbb.containerSecurity" (dict "root" .) | nindent 6 }}
+      volumeMounts:
+        # The hasura CLI keeps its global config, and the cli-ext binary it unpacks, under $HOME.
+        - name: home
+          mountPath: /home/bigbluebutton
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    {{- include "bbb.scratch" (dict "name" "home" "size" "512Mi") | nindent 4 }}
+    {{- include "bbb.scratch" (dict "name" "tmp" "size" "64Mi") | nindent 4 }}
+{{- end }}
+# Applies the BigBlueButton metadata once Hasura is up. Plain resource named after the hash of
+# the rendered pod template (schema sha, metadata content sha and image tag included): a
+# recreated bbb_graphql or new metadata re-runs it, an unchanged release does not, and no
+# upgrade patches the immutable template of an existing Job.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: hasura-metadata-{{ printf "%s%s%s" .Values.bootstrap.schemaSha .Values.hasuraMetadata.metadataSha .Values.hasuraMetadata.tag | sha256sum | trunc 8 }}
+  name: hasura-metadata-{{ include "bbb.hasuraMetadataPod" . | sha256sum | trunc 8 }}
   labels:
     {{- include "bbb.labels" . | nindent 4 }}
     {{- include "bbb.selector" "hasura-metadata" | nindent 4 }}
 spec:
   backoffLimit: 3
+  # A retry starts only once the previous pod is gone.
+  podReplacementPolicy: Failed
   template:
-    metadata:
-      labels:
-        {{- include "bbb.labels" . | nindent 8 }}
-        {{- include "bbb.selector" "hasura-metadata" | nindent 8 }}
-    spec:
-      restartPolicy: Never
-      imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
-      initContainers:
-        # Never check consistency while the bootstrap is recreating bbb_graphql.
-        {{- include "bbb.waitBootstrap" (dict "root" . "user" "bbb_hasura" "key" "bbb-hasura-password") | nindent 8 }}
-        # Hasura answers /healthz only after its init container saw the current schema marker.
-        - name: wait-hasura
-          image: {{ include "bbb.image" (dict "root" . "name" "hasura-metadata" "tag" .Values.hasuraMetadata.tag) }}
-          command: ["sh", "-c", "until curl -fsS -o /dev/null http://hasura:8085/healthz; do echo waiting for hasura; sleep 3; done"]
-      containers:
-        - name: apply
-          image: {{ include "bbb.image" (dict "root" . "name" "hasura-metadata" "tag" .Values.hasuraMetadata.tag) }}
-          env:
-            - name: HASURA_GRAPHQL_ENABLE_TELEMETRY
-              value: "false"
-            - name: HASURA_ENDPOINT
-              value: http://hasura:8085
-            - name: HASURA_GRAPHQL_ADMIN_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.hasura }}
-                  key: admin-secret
+    {{- include "bbb.hasuraMetadataPod" . | nindent 4 }}

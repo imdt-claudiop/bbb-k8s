@@ -1,3 +1,22 @@
+{{- define "bbb.middlewareConfig" -}}
+# Override merged over the packaged config.yml (bbb-graphql-middleware/config/Config.go);
+# the middleware reads no environment variables for these.
+bbb-graphql-middleware.yml: |
+  server:
+    listen_host: 0.0.0.0
+    listen_port: 8378
+  redis:
+    host: redis
+    port: 6379
+  hasura:
+    url: ws://hasura:8085/v1/graphql
+  graphql-actions:
+    url: http://gql-actions:8093
+  auth_hook:
+    url: http://bbb-web:8090/bigbluebutton/connection/checkGraphqlAuthorization
+  session_vars_hook:
+    url: http://akka-apps:8901/userInfo
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -5,23 +24,7 @@ metadata:
   labels:
     {{- include "bbb.labels" . | nindent 4 }}
 data:
-  # Override merged over the packaged config.yml (bbb-graphql-middleware/config/Config.go);
-  # the middleware reads no environment variables for these.
-  bbb-graphql-middleware.yml: |
-    server:
-      listen_host: 0.0.0.0
-      listen_port: 8378
-    redis:
-      host: redis
-      port: 6379
-    hasura:
-      url: ws://hasura:8085/v1/graphql
-    graphql-actions:
-      url: http://gql-actions:8093
-    auth_hook:
-      url: http://bbb-web:8090/bigbluebutton/connection/checkGraphqlAuthorization
-    session_vars_hook:
-      url: http://akka-apps:8901/userInfo
+  {{- include "bbb.middlewareConfig" . | nindent 2 }}
 ---
 apiVersion: v1
 kind: Service
@@ -55,10 +58,16 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.podLabels" . | nindent 8 }}
         {{- include "bbb.selector" "gql-middleware" | nindent 8 }}
+      annotations:
+        # The config is read at start through a subPath mount, which never sees ConfigMap
+        # updates: restart the middleware when it changes (clients reconnect).
+        bbb-k8s/config-sha: {{ include "bbb.middlewareConfig" . | sha256sum | trunc 16 | quote }}
     spec:
-      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.graphqlMiddleware.role) | nindent 6 }}
+      {{- include "bbb.placement" (dict "root" . "role" .Values.graphqlMiddleware.role) | nindent 6 }}
+      {{- include "bbb.podDefaults" . | nindent 6 }}
+      {{- include "bbb.podSecurityContext" (dict "user" 998) | nindent 6 }}
       imagePullSecrets:
         - name: {{ .Values.imagePullSecret }}
       initContainers:
@@ -71,6 +80,7 @@ spec:
         - name: gql-middleware
           image: {{ include "bbb.image" (dict "root" . "name" "graphql-middleware" "tag" .Values.graphqlMiddleware.tag) }}
           ports:
+            # Also serves the Prometheus metrics, on /metrics.
             - name: http
               containerPort: 8378
           readinessProbe:
@@ -84,11 +94,15 @@ spec:
             periodSeconds: 20
           resources:
             {{- toYaml .Values.graphqlMiddleware.resources | nindent 12 }}
+          {{- include "bbb.containerSecurity" (dict "root" .) | nindent 10 }}
           volumeMounts:
             - name: config
               mountPath: /etc/bigbluebutton/bbb-graphql-middleware.yml
               subPath: bbb-graphql-middleware.yml
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: config
           configMap:
             name: gql-middleware-config
+        {{- include "bbb.scratch" (dict "name" "tmp" "size" "256Mi") | nindent 8 }}

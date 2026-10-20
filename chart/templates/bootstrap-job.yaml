@@ -1,12 +1,54 @@
 {{- if not .Values.bootstrap.schemaSha }}{{ fail "bootstrap.schemaSha is empty: run images/build.sh bootstrap" }}{{ end }}
+{{- define "bbb.bootstrapPod" -}}
+metadata:
+  labels:
+    {{- include "bbb.podLabels" . | nindent 4 }}
+    {{- include "bbb.selector" "bootstrap" | nindent 4 }}
+spec:
+  restartPolicy: Never
+  {{- include "bbb.placement" (dict "root" . "role" .Values.postgres.role) | nindent 2 }}
+  {{- include "bbb.podDefaults" . | nindent 2 }}
+  {{- include "bbb.podSecurityContext" (dict "user" 999) | nindent 2 }}
+  imagePullSecrets:
+    - name: {{ .Values.imagePullSecret }}
+  initContainers:
+    - name: wait-postgres
+      image: {{ .Values.postgres.image }}
+      command: ["sh", "-c", "until pg_isready -h postgres -p 5432 -t 2; do sleep 2; done"]
+      {{- include "bbb.initResources" . | nindent 6 }}
+      {{- include "bbb.containerSecurity" (dict "root" .) | nindent 6 }}
+  containers:
+    - name: bootstrap
+      image: {{ include "bbb.image" (dict "root" . "name" "bootstrap" "tag" .Values.bootstrap.tag) }}
+      env:
+        - name: PGHOST
+          value: postgres
+        - name: SCHEMA_SHA
+          value: {{ .Values.bootstrap.schemaSha | quote }}
+        {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "PGPASSWORD" "key" "postgres-password") | nindent 8 }}
+        {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "BBB_CORE_PASSWORD" "key" "bbb-core-password") | nindent 8 }}
+        {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "BBB_HASURA_PASSWORD" "key" "bbb-hasura-password") | nindent 8 }}
+        {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "HASURA_APP_PASSWORD" "key" "hasura-app-password") | nindent 8 }}
+        {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "BLOCKNOTE_APP_PASSWORD" "key" "blocknote-app-password") | nindent 8 }}
+      resources:
+        requests: { cpu: 100m, memory: 128Mi }
+        limits: { cpu: 500m, memory: 256Mi }
+      {{- include "bbb.containerSecurity" (dict "root" .) | nindent 6 }}
+      volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    {{- include "bbb.scratch" (dict "name" "tmp" "size" "64Mi") | nindent 4 }}
+{{- end }}
 # Plain resource, not a hook: a hook would deadlock with "helm --wait" waiting for akka-apps,
 # which in turn waits for this Job (spec D8, order Postgres/Redis -> bootstrap -> akka).
-# The name changes with the schema or the image tag, so an upgrade replaces the Job instead
-# of patching its immutable template.
+# The name is the hash of the rendered pod template (schema sha and image tag included), so any
+# change creates a new Job instead of patching the immutable template of the old one; a re-run
+# with the same schema only re-asserts roles and grants.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "bbb.bootstrapJobName" . }}
+  name: bbb-bootstrap-{{ include "bbb.bootstrapPod" . | sha256sum | trunc 8 }}
   labels:
     {{- include "bbb.labels" . | nindent 4 }}
     {{- include "bbb.selector" "bootstrap" | nindent 4 }}
@@ -14,29 +56,8 @@ metadata:
     bbb-k8s/schema-sha: {{ .Values.bootstrap.schemaSha | quote }}
 spec:
   backoffLimit: 2
+  # A retry starts only once the previous pod is gone (an evicted pod is still terminating when
+  # the default policy replaces it), so two bootstraps never run at the same time.
+  podReplacementPolicy: Failed
   template:
-    metadata:
-      labels:
-        {{- include "bbb.labels" . | nindent 8 }}
-        {{- include "bbb.selector" "bootstrap" | nindent 8 }}
-    spec:
-      restartPolicy: Never
-      imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
-      initContainers:
-        - name: wait-postgres
-          image: {{ .Values.postgres.image }}
-          command: ["sh", "-c", "until pg_isready -h postgres -p 5432 -t 2; do sleep 2; done"]
-      containers:
-        - name: bootstrap
-          image: {{ include "bbb.image" (dict "root" . "name" "bootstrap" "tag" .Values.bootstrap.tag) }}
-          env:
-            - name: PGHOST
-              value: postgres
-            - name: SCHEMA_SHA
-              value: {{ .Values.bootstrap.schemaSha | quote }}
-            {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "PGPASSWORD" "key" "postgres-password") | nindent 12 }}
-            {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "BBB_CORE_PASSWORD" "key" "bbb-core-password") | nindent 12 }}
-            {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "BBB_HASURA_PASSWORD" "key" "bbb-hasura-password") | nindent 12 }}
-            {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "HASURA_APP_PASSWORD" "key" "hasura-app-password") | nindent 12 }}
-            {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "BLOCKNOTE_APP_PASSWORD" "key" "blocknote-app-password") | nindent 12 }}
+    {{- include "bbb.bootstrapPod" . | nindent 4 }}

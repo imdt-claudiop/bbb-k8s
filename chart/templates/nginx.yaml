@@ -47,7 +47,11 @@ metadata:
   name: bbb-nginx
   labels:
     {{- include "bbb.labels" . | nindent 4 }}
-  {{- with .Values.nginx.service.annotations }}
+  {{- $annotations := deepCopy (.Values.nginx.service.annotations | default dict) }}
+  {{- if .Values.nginx.service.keep }}
+  {{- $_ := set $annotations "helm.sh/resource-policy" "keep" }}
+  {{- end }}
+  {{- with $annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
@@ -83,19 +87,19 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.podLabels" . | nindent 8 }}
         {{- include "bbb.selector" "bbb-nginx" | nindent 8 }}
+        {{- include "bbb.storageGroupLabel" . | nindent 8 }}
       annotations:
         # nginx reads its site only at start: restart it when the site changes (e.g. publicHost).
         bbb-k8s/site-sha: {{ include "bbb.nginxSite" . | sha256sum | trunc 16 | quote }}
     spec:
-      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
+      {{- include "bbb.placement" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
+      {{- include "bbb.storageAffinity" . | nindent 6 }}
+      {{- include "bbb.podDefaults" . | nindent 6 }}
+      {{- include "bbb.podSecurityContext" (dict "user" 998 "fsGroup" 998) | nindent 6 }}
       imagePullSecrets:
         - name: {{ .Values.imagePullSecret }}
-      securityContext:
-        runAsUser: 998
-        runAsGroup: 998
-        fsGroup: 998
       initContainers:
         # The learning dashboard app lives next to the per-meeting data bbb-web writes in
         # /var/bigbluebutton/learning-dashboard (spec section 4), and the presentation player is
@@ -110,6 +114,8 @@ spec:
               cp -r /opt/learning-dashboard/. /var/bigbluebutton/learning-dashboard/
               rm -rf /var/bigbluebutton/playback/presentation/2.3/*
               cp -r /opt/playback/presentation/2.3/. /var/bigbluebutton/playback/presentation/2.3/
+          {{- include "bbb.initResources" . | nindent 10 }}
+          {{- include "bbb.containerSecurity" (dict "root" .) | nindent 10 }}
           volumeMounts:
             - name: data
               mountPath: /var/bigbluebutton
@@ -132,6 +138,7 @@ spec:
             periodSeconds: 20
           resources:
             {{- toYaml .Values.nginx.resources | nindent 12 }}
+          {{- include "bbb.containerSecurity" (dict "root" .) | nindent 10 }}
           volumeMounts:
             - name: data
               mountPath: /var/bigbluebutton
@@ -156,7 +163,6 @@ spec:
         - name: tls
           secret:
             secretName: {{ .Values.nginx.tlsSecret }}
-        - name: tmp
-          emptyDir: {}
-        - name: cache
-          emptyDir: {}
+        # Request bodies (uploads on their way to bbb-web), the pid file and nginx's caches.
+        {{- include "bbb.scratch" (dict "name" "tmp" "size" "1Gi") | nindent 8 }}
+        {{- include "bbb.scratch" (dict "name" "cache" "size" "512Mi") | nindent 8 }}

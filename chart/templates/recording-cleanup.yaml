@@ -1,0 +1,72 @@
+{{- if .Values.recording.cleanup.enabled }}
+# The daily cleanup of a package install (bigbluebutton-config/cron.daily/bigbluebutton): without
+# it bbb-data and bbb-recorder only grow. It mounts both volumes, so it runs with the storage
+# group (RWO: their node).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: recording-cleanup
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- include "bbb.selector" "recording-cleanup" | nindent 4 }}
+spec:
+  schedule: {{ .Values.recording.cleanup.schedule | quote }}
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      podReplacementPolicy: Failed
+      template:
+        metadata:
+          labels:
+            {{- include "bbb.podLabels" . | nindent 12 }}
+            {{- include "bbb.selector" "recording-cleanup" | nindent 12 }}
+            {{- include "bbb.storageGroupLabel" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          {{- include "bbb.placement" (dict "root" . "role" .Values.bbbData.role) | nindent 10 }}
+          {{- include "bbb.storageAffinity" . | nindent 10 }}
+          {{- include "bbb.podDefaults" . | nindent 10 }}
+          {{- include "bbb.podSecurityContext" (dict "user" 998 "fsGroup" 998) | nindent 10 }}
+          imagePullSecrets:
+            - name: {{ .Values.imagePullSecret }}
+          containers:
+            - name: cleanup
+              # The recording image: the rap scripts tell which formats exist, and it runs as 998.
+              image: {{ include "bbb.image" (dict "root" . "name" "recording" "tag" .Values.recording.tag) }}
+              command: ["bash", "-c"]
+              args:
+                - {{ .Files.Get "scripts/recording-cleanup.sh" | toJson }}
+              env:
+                - name: HISTORY
+                  value: {{ .Values.recording.cleanup.history | quote }}
+                - name: UNRECORDED_DAYS
+                  value: {{ .Values.recording.cleanup.unrecordedDays | quote }}
+                - name: PUBLISHED_DAYS
+                  value: {{ .Values.recording.cleanup.publishedDays | quote }}
+                - name: LOG_HISTORY
+                  value: {{ .Values.recording.cleanup.logHistory | quote }}
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { cpu: 500m, memory: 256Mi }
+              {{- include "bbb.containerSecurity" (dict "root" .) | nindent 14 }}
+              volumeMounts:
+                - name: data
+                  mountPath: /var/bigbluebutton
+                - name: recordings
+                  mountPath: /var/lib/bbb-webrtc-recorder
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: bbb-data
+            - name: recordings
+              persistentVolumeClaim:
+                claimName: bbb-recorder
+            {{- include "bbb.scratch" (dict "name" "tmp" "size" "64Mi") | nindent 12 }}
+{{- end }}

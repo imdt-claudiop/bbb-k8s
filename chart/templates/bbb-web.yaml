@@ -9,6 +9,35 @@ imageTagThreshold=800
 {{ $k }}={{ $v }}
 {{- end }}
 {{- end }}
+{{- define "bbb.webLogback" -}}
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <layout class="ch.qos.logback.classic.PatternLayout">
+      <Pattern>%d{"yyyy-MM-dd'T'HH:mm:ss.SSSXXX"} %-5level %logger{35} - %msg%n</Pattern>
+    </layout>
+  </appender>
+
+  <logger name="akka" level="INFO" />
+  <logger name="io.lettuce" level="INFO" />
+  <logger name="org.bigbluebutton" level="DEBUG" />
+
+  <logger name="grails.app.controllers" level="DEBUG" />
+  <logger name="grails.app.services" level="DEBUG" />
+
+  <logger name="org.grails.web.servlet" level="ERROR" />
+  <logger name="org.grails.web.pages" level="ERROR" />
+  <logger name="org.grails.web.sitemesh" level="ERROR" />
+  <logger name="org.grails.web.mapping.filter" level="ERROR" />
+  <logger name="org.grails.web.mapping" level="ERROR" />
+  <logger name="org.grails.commons" level="ERROR" />
+  <logger name="org.springframework" level="ERROR" />
+
+  <root level="ERROR">
+    <appender-ref ref="STDOUT" />
+  </root>
+</configuration>
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -19,6 +48,10 @@ data:
   # Template of /etc/bigbluebutton/bbb-web.properties; the entrypoint appends securitySalt.
   bbb-web.properties: |
     {{- include "bbb.webProperties" . | nindent 4 }}
+  # The war's logback.xml (bigbluebutton-web/grails-app/conf) without its FILE appender: in a
+  # pod stdout is the log, which the kubelet rotates, while the file only filled an emptyDir.
+  logback.xml: |
+    {{- include "bbb.webLogback" . | nindent 4 }}
 ---
 apiVersion: v1
 kind: Service
@@ -51,20 +84,25 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.podLabels" . | nindent 8 }}
         {{- include "bbb.selector" "bbb-web" | nindent 8 }}
+        {{- include "bbb.storageGroupLabel" . | nindent 8 }}
       annotations:
-        # The properties are rendered at start: restart bbb-web when they change. bbb-web holds
-        # meetings in memory, so such a change ends them (spec L1): maintenance window.
-        bbb-k8s/properties-sha: {{ include "bbb.webProperties" . | sha256sum | trunc 16 | quote }}
+        # The properties, logback and settings.yml are read at start: restart bbb-web when they
+        # change. bbb-web holds meetings in memory, so such a change ends them (spec L1):
+        # maintenance window.
+        bbb-k8s/config-sha: {{ printf "%s%s%s" (include "bbb.webProperties" .) (include "bbb.webLogback" .) (include "bbb.clientSettingsDefaults" .) | sha256sum | trunc 16 | quote }}
     spec:
-      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
+      {{- include "bbb.placement" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
+      {{- include "bbb.storageAffinity" . | nindent 6 }}
+      {{- include "bbb.podDefaults" . | nindent 6 }}
+      {{- include "bbb.podSecurityContext" (dict "user" 998 "fsGroup" 998) | nindent 6 }}
       imagePullSecrets:
         - name: {{ .Values.imagePullSecret }}
-      securityContext:
-        runAsUser: 998
-        runAsGroup: 998
-        fsGroup: 998
+      initContainers:
+        # Without Redis the application context fails while the JVM keeps running: it neither
+        # serves nor exits, and only the liveness probe would end it.
+        {{- include "bbb.waitRedis" . | nindent 8 }}
       containers:
         - name: bbb-web
           image: {{ include "bbb.image" (dict "root" . "name" "bbb-web" "tag" .Values.bbbWeb.tag) }}
@@ -74,9 +112,25 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.salt }}
                   key: security-salt
+            - name: INITIAL_HEAP_SIZE
+              value: {{ .Values.bbbWeb.heap.initial | quote }}
+            - name: MAX_HEAP_SIZE
+              value: {{ .Values.bbbWeb.heap.max | quote }}
+            # Logs to stdout only (the logback.xml of bbb-web-config, mounted with the template).
+            - name: JAVA_OPTS
+              value: "-Dlogging.config=/etc/bigbluebutton-template/logback.xml -Dlogback.configurationFile=/etc/bigbluebutton-template/logback.xml"
+            # Read by run-in-systemd.sh, the wrapper of every presentation conversion.
+            - name: BBB_PRESENTATION_CONVERSION_MEMORY_MAX
+              value: {{ .Values.bbbWeb.conversionMemoryMax | quote }}
           ports:
             - name: http
               containerPort: 8090
+          # TCP like the rest; the startup probe gives the JVM five minutes before liveness counts.
+          startupProbe:
+            tcpSocket:
+              port: 8090
+            periodSeconds: 10
+            failureThreshold: 30
           readinessProbe:
             tcpSocket:
               port: 8090
@@ -84,11 +138,11 @@ spec:
           livenessProbe:
             tcpSocket:
               port: 8090
-            initialDelaySeconds: 120
             periodSeconds: 30
             failureThreshold: 5
           resources:
             {{- toYaml .Values.bbbWeb.resources | nindent 12 }}
+          {{- include "bbb.containerSecurity" (dict "root" .) | nindent 10 }}
           volumeMounts:
             - name: data
               mountPath: /var/bigbluebutton
@@ -110,12 +164,10 @@ spec:
         - name: config-template
           configMap:
             name: bbb-web-config
-        - name: etc
-          emptyDir: {}
+        {{- include "bbb.scratch" (dict "name" "etc" "size" "64Mi") | nindent 8 }}
         - name: client-settings
           configMap:
             name: client-settings
-        - name: tmp
-          emptyDir: {}
-        - name: logs
-          emptyDir: {}
+        # Uploads and conversion scratch files.
+        {{- include "bbb.scratch" (dict "name" "tmp" "size" "2Gi") | nindent 8 }}
+        {{- include "bbb.scratch" (dict "name" "logs" "size" "256Mi") | nindent 8 }}

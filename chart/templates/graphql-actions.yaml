@@ -31,10 +31,12 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.podLabels" . | nindent 8 }}
         {{- include "bbb.selector" "gql-actions" | nindent 8 }}
     spec:
-      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.graphqlActions.role) | nindent 6 }}
+      {{- include "bbb.placement" (dict "root" . "role" .Values.graphqlActions.role) | nindent 6 }}
+      {{- include "bbb.podDefaults" . | nindent 6 }}
+      {{- include "bbb.podSecurityContext" (dict "user" 998) | nindent 6 }}
       imagePullSecrets:
         - name: {{ .Values.imagePullSecret }}
       containers:
@@ -62,3 +64,9 @@ spec:
             periodSeconds: 20
           resources:
             {{- toYaml .Values.graphqlActions.resources | nindent 12 }}
+          {{- include "bbb.containerSecurity" (dict "root" .) | nindent 10 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        {{- include "bbb.scratch" (dict "name" "tmp" "size" "256Mi") | nindent 8 }}

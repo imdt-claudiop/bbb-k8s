@@ -1,4 +1,48 @@
 {{- $schemaSha := required "bootstrap.schemaSha is empty: run images/build.sh bootstrap" .Values.bootstrap.schemaSha }}
+{{- define "bbb.akkaAppsConfig" -}}
+# Same shape the package preinst writes: include the packaged defaults, override what differs.
+# Only http.* accepts env vars upstream; the rest is HOCON, with secrets resolved from env.
+bbb-apps-akka.conf: |
+  include file("/usr/share/bbb-apps-akka/conf/application.conf")
+
+  redis.host = "redis"
+  postgres.properties.serverName = "postgres"
+  postgres.properties.password = ${BBB_CORE_PASSWORD}
+  services.bbbWebAPI = {{ .Values.akkaApps.bbbWebAPI | quote }}
+  services.sharedSecret = ${SHARED_SECRET}
+  services.graphqlMiddlewareAPI = {{ .Values.akkaApps.graphqlMiddlewareAPI | quote }}
+  http.interface = "0.0.0.0"
+# The package's conf/logback.xml (akka-bbb-apps/src/universal/conf) without its FILE appender:
+# in a pod stdout is the log, which the kubelet rotates, while the file only filled an emptyDir.
+logback.xml: |
+  <?xml version="1.0" encoding="UTF-8"?>
+  <configuration>
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+      <layout class="ch.qos.logback.classic.PatternLayout">
+        <Pattern>%d{"yyyy-MM-dd'T'HH:mm:ss.SSSXXX"} %-5level %logger{35} - %replace(%msg){'[\n\r]', ' '}%n</Pattern>
+      </layout>
+    </appender>
+
+    <logger name="akka" level="INFO" />
+    <logger name="org.bigbluebutton" level="DEBUG" />
+    <logger name="io.lettuce" level="INFO" />
+    <logger name="slick" level="INFO" />
+
+    <root level="DEBUG">
+      <appender-ref ref="STDOUT"/>
+    </root>
+  </configuration>
+{{- end }}
+{{- define "bbb.clientSettings" -}}
+# Admin overrides merged over settings.yml (the bbb-html5.yml of a package install).
+bbb-html5.yml: |
+  {{- toYaml .Values.clientSettingsOverride | nindent 2 }}
+settings.yml: |
+  {{- include "bbb.clientSettingsDefaults" . | nindent 2 }}
+{{- end }}
+{{- define "bbb.clientSettingsDefaults" -}}
+{{ .Files.Get "files/settings.yml" | required "chart/files/settings.yml is missing: run images/build.sh akka-apps" }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,20 +50,10 @@ metadata:
   labels:
     {{- include "bbb.labels" . | nindent 4 }}
 data:
-  # Same shape the package preinst writes: include the packaged defaults, override what differs.
-  # Only http.* accepts env vars upstream; the rest is HOCON, with secrets resolved from env.
-  bbb-apps-akka.conf: |
-    include file("/usr/share/bbb-apps-akka/conf/application.conf")
-
-    redis.host = "redis"
-    postgres.properties.serverName = "postgres"
-    postgres.properties.password = ${BBB_CORE_PASSWORD}
-    services.bbbWebAPI = {{ .Values.akkaApps.bbbWebAPI | quote }}
-    services.sharedSecret = ${SHARED_SECRET}
-    services.graphqlMiddlewareAPI = {{ .Values.akkaApps.graphqlMiddlewareAPI | quote }}
-    http.interface = "0.0.0.0"
+  {{- include "bbb.akkaAppsConfig" . | nindent 2 }}
 ---
-# akka-apps is the reader of the client settings (ClientSettings.scala); bbb-web mounts it later too.
+# akka-apps is the reader of the client settings (ClientSettings.scala); bbb-web mounts
+# settings.yml too.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -27,11 +61,7 @@ metadata:
   labels:
     {{- include "bbb.labels" . | nindent 4 }}
 data:
-  # Admin overrides merged over settings.yml (the bbb-html5.yml of a package install).
-  bbb-html5.yml: |
-    {{- toYaml .Values.clientSettingsOverride | nindent 4 }}
-  settings.yml: |
-    {{- .Files.Get "files/settings.yml" | required "chart/files/settings.yml is missing: run images/build.sh akka-apps" | nindent 4 }}
+  {{- include "bbb.clientSettings" . | nindent 2 }}
 ---
 apiVersion: v1
 kind: Service
@@ -65,25 +95,32 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.podLabels" . | nindent 8 }}
         {{- include "bbb.selector" "akka-apps" | nindent 8 }}
       annotations:
         # Schema sha only (not the bootstrap image tag): a new schema recreates akka in the
         # same upgrade, a bootstrap image bump does not.
         bbb-k8s/schema-sha: {{ $schemaSha | quote }}
+        # akka reads its config, logback and the client settings only at start (and subPath
+        # mounts never see ConfigMap updates): restart it when they change. That ends the
+        # meetings it holds (spec L1): maintenance window.
+        bbb-k8s/config-sha: {{ printf "%s%s" (include "bbb.akkaAppsConfig" .) (include "bbb.clientSettings" .) | sha256sum | trunc 16 | quote }}
     spec:
-      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.akkaApps.role) | nindent 6 }}
+      {{- include "bbb.placement" (dict "root" . "role" .Values.akkaApps.role) | nindent 6 }}
+      {{- include "bbb.podDefaults" . | nindent 6 }}
+      {{- include "bbb.podSecurityContext" (dict "user" 998) | nindent 6 }}
       imagePullSecrets:
         - name: {{ .Values.imagePullSecret }}
-      securityContext:
-        runAsUser: 998
-        runAsGroup: 998
       initContainers:
         # Hold akka until the bootstrap Job wrote the marker of the current schema.
         {{- include "bbb.waitBootstrap" (dict "root" . "user" "bbb_core" "key" "bbb-core-password") | nindent 8 }}
       containers:
         - name: akka-apps
           image: {{ include "bbb.image" (dict "root" . "name" "akka-apps" "tag" .Values.akkaApps.tag) }}
+          # The start script applies command-line -J options after the ones of conf/application.ini.
+          args:
+            - -J-Xms{{ .Values.akkaApps.heap.initial }}
+            - -J-Xmx{{ .Values.akkaApps.heap.max }}
           env:
             - name: INTERFACE
               value: "0.0.0.0"
@@ -97,7 +134,14 @@ spec:
             - name: http
               containerPort: 8901
           # TCP only: /healthz is 503 in the first minute and whenever bbb-web is away
-          # (HealthzService.scala); as liveness it would turn a hiccup into ended meetings.
+          # (HealthzService.scala); as liveness it would turn a hiccup into ended meetings, and
+          # as readiness it would take the Hasura auth hook (akka-apps:8901/userInfo) down too.
+          # The startup probe gives a slow boot five minutes before liveness counts.
+          startupProbe:
+            tcpSocket:
+              port: 8901
+            periodSeconds: 10
+            failureThreshold: 30
           readinessProbe:
             tcpSocket:
               port: 8901
@@ -105,15 +149,18 @@ spec:
           livenessProbe:
             tcpSocket:
               port: 8901
-            initialDelaySeconds: 60
             periodSeconds: 30
             failureThreshold: 5
           resources:
             {{- toYaml .Values.akkaApps.resources | nindent 12 }}
+          {{- include "bbb.containerSecurity" (dict "root" .) | nindent 10 }}
           volumeMounts:
             - name: config
               mountPath: /etc/bigbluebutton/bbb-apps-akka.conf
               subPath: bbb-apps-akka.conf
+            - name: config
+              mountPath: /usr/share/bbb-apps-akka/conf/logback.xml
+              subPath: logback.xml
             - name: client-settings
               mountPath: /usr/share/bigbluebutton/html5-client/private/config/settings.yml
               subPath: settings.yml
@@ -122,6 +169,8 @@ spec:
               subPath: bbb-html5.yml
             - name: logs
               mountPath: /usr/share/bbb-apps-akka/logs
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: config
           configMap:
@@ -129,5 +178,5 @@ spec:
         - name: client-settings
           configMap:
             name: client-settings
-        - name: logs
-          emptyDir: {}
+        {{- include "bbb.scratch" (dict "name" "logs" "size" "256Mi") | nindent 8 }}
+        {{- include "bbb.scratch" (dict "name" "tmp" "size" "256Mi") | nindent 8 }}

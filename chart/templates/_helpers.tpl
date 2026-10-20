@@ -4,24 +4,107 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- end }}
 
+{{/* Labels of pod templates. No chart version here: a chart release that changes nothing in a
+     workload must not restart its pods (restarting akka-apps or bbb-web ends meetings). */}}
+{{- define "bbb.podLabels" -}}
+app.kubernetes.io/part-of: bigbluebutton
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
 {{/* selector labels: include "bbb.selector" "akka-apps" */}}
 {{- define "bbb.selector" -}}
 app.kubernetes.io/name: {{ . }}
 {{- end }}
 
-{{- define "bbb.nodeSelector" -}}
+{{/* Placement on a node role (spec D1): the role label, set on the node pool (docs/install.md
+     "Node roles"), and a toleration of the NoSchedule taint of the same role, so a pool can be
+     kept for its role by tainting it. */}}
+{{- define "bbb.placement" -}}
 nodeSelector:
   {{ .root.Values.nodeRoleLabel }}: {{ .role }}
+tolerations:
+  - key: {{ .root.Values.nodeRoleLabel }}
+    operator: Equal
+    value: {{ .role }}
+    effect: NoSchedule
+{{- end }}
+
+{{/* The pods that mount bbb-data or bbb-recorder (spec D2). RWO volumes attach to one node, so
+     the group has to share it: each pod carries this label and requires a node that already runs
+     a pod with it. A pod that matches its own term may start alone, so the first one schedules
+     and the others follow it. */}}
+{{- define "bbb.storageGroupLabel" -}}
+bbb-k8s/volume-group: bbb-data
+{{- end }}
+
+{{- define "bbb.storageAffinity" -}}
+affinity:
+  podAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            {{- include "bbb.storageGroupLabel" . | nindent 12 }}
+        topologyKey: kubernetes.io/hostname
+{{- end }}
+
+{{/* Pod settings every workload shares. No service-link variables: a ClusterIP Service named
+     redis would inject REDIS_PORT=tcp://..., which bbb-webrtc-sfu reads as its Redis port (the
+     way LIVEKIT_PORT broke livekit-server). No API token: no pod calls the Kubernetes API. */}}
+{{- define "bbb.podDefaults" -}}
+enableServiceLinks: false
+automountServiceAccountToken: false
+{{- end }}
+
+{{/* Pod securityContext. dict: "user" (run every container as this UID/GID) and "fsGroup",
+     both optional. */}}
+{{- define "bbb.podSecurityContext" -}}
+securityContext:
+  seccompProfile:
+    type: RuntimeDefault
+  {{- with .user }}
+  runAsNonRoot: true
+  runAsUser: {{ . }}
+  runAsGroup: {{ . }}
+  {{- end }}
+  {{- with .fsGroup }}
+  fsGroup: {{ . }}
+  # Chown the volume only when its root does not carry the group yet, instead of file by file
+  # on every start (the recordings only grow).
+  fsGroupChangePolicy: OnRootMismatch
+  {{- end }}
+{{- end }}
+
+{{/* Container securityContext (docs/install.md "Pod security"). dict: "root", optional "drop"
+     (default ALL) and "add". */}}
+{{- define "bbb.containerSecurity" -}}
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: {{ .root.Values.podSecurity.readOnlyRootFilesystem }}
+  capabilities:
+    drop: {{ .drop | default (list "ALL") | toJson }}
+    {{- with .add }}
+    add: {{ toJson . }}
+    {{- end }}
+{{- end }}
+
+{{/* Resources of the short init containers. Requests equal limits, so they keep a Guaranteed
+     pod (bbb-web) Guaranteed. */}}
+{{- define "bbb.initResources" -}}
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits: { cpu: 100m, memory: 128Mi }
+{{- end }}
+
+{{/* emptyDir for a scratch path. dict: "name", "size" (sizeLimit). */}}
+{{- define "bbb.scratch" -}}
+- name: {{ .name }}
+  emptyDir:
+    sizeLimit: {{ .size }}
 {{- end }}
 
 {{- define "bbb.image" -}}
 {{- if not .tag }}{{ fail (printf "%s image tag is empty: run images/build.sh %s" .name .name) }}{{ end -}}
 {{ .root.Values.registry }}/{{ .name }}:{{ .tag }}
-{{- end }}
-
-{{/* Job name keyed on schema sha + bootstrap image tag: Job templates are immutable. */}}
-{{- define "bbb.bootstrapJobName" -}}
-bbb-bootstrap-{{ printf "%s%s" .Values.bootstrap.schemaSha .Values.bootstrap.tag | sha256sum | trunc 8 }}
 {{- end }}
 
 {{- define "bbb.dbPasswordEnv" -}}
@@ -55,6 +138,8 @@ bbb-bootstrap-{{ printf "%s%s" .Values.bootstrap.schemaSha .Values.bootstrap.tag
         echo "waiting for bbb_graphql at $EXPECTED"; sleep 3
       done
       echo "bbb_graphql is at $EXPECTED"
+  {{- include "bbb.initResources" . | nindent 2 }}
+  {{- include "bbb.containerSecurity" (dict "root" .root) | nindent 2 }}
 {{- end }}
 
 {{- define "bbb.publicHost" -}}
@@ -62,10 +147,8 @@ bbb-bootstrap-{{ printf "%s%s" .Values.bootstrap.schemaSha .Values.bootstrap.tag
 {{- end }}
 
 {{/* initContainer: wait until Redis answers. Several services exit (or panic) when their first
-     Redis connection fails, and the headless Service has no DNS record until Redis is ready. A
-     single answer is not enough: lookups made before Redis was ready kept failing with "no such
-     host" for a few seconds afterwards (likely CoreDNS negative caching, not confirmed), so
-     require answers spanning 10 seconds. */}}
+     Redis connection fails. The redis Service has a ClusterIP, so its name resolves before Redis
+     is ready and one answer is enough. */}}
 {{- define "bbb.waitRedis" -}}
 - name: wait-redis
   image: {{ .Values.redis.image }}
@@ -73,9 +156,9 @@ bbb-bootstrap-{{ printf "%s%s" .Values.bootstrap.schemaSha .Values.bootstrap.tag
     - sh
     - -c
     - |
-      ok=0
-      while [ "$ok" -lt 6 ]; do
-        if [ "$(redis-cli -h redis ping 2>/dev/null)" = PONG ]; then ok=$((ok + 1)); else ok=0; echo waiting for redis; fi
-        sleep 2
+      until [ "$(redis-cli -h redis ping 2>/dev/null)" = PONG ]; do
+        echo waiting for redis; sleep 2
       done
+  {{- include "bbb.initResources" . | nindent 2 }}
+  {{- include "bbb.containerSecurity" (dict "root" .) | nindent 2 }}
 {{- end }}

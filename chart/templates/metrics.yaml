@@ -1,0 +1,40 @@
+{{- if and .Values.metrics.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1/PodMonitor") }}
+# Scrape targets for the Prometheus Operator (kube-prometheus-stack), rendered only where its
+# CRDs exist (docs/install.md "Metrics"). graphql-middleware serves /metrics on its API port.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: gql-middleware
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- with .Values.metrics.podMonitorLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "bbb.selector" "gql-middleware" | nindent 6 }}
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+{{- if .Values.livekit.prometheusPort }}
+---
+# livekit-server: rooms, participants, packets and loss, on prometheus_port of the media node.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: livekit
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- with .Values.metrics.podMonitorLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "bbb.selector" "livekit" | nindent 6 }}
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+{{- end }}
+{{- end }}

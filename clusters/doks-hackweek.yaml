@@ -1,16 +1,19 @@
 # Values of the DOKS hackweek cluster (NYC1). Non-secret; written from scripts/public-host.sh
-# after the LoadBalancer of svc/bbb-nginx got its IP. A reinstall that recreates the
-# LoadBalancer gets a new IP: run the script again and update this line.
+# after the LoadBalancer of svc/bbb-nginx got its IP. The IP, and so the host, stays the same
+# across reinstalls when the LoadBalancer is kept (docs/install.md "Keeping the public IP").
 publicHost: bbbk8s-ip-129-212-196-56.bbb.imdt.dev
+# Before tearing the release down, scripts/keep-loadbalancer.sh prints the UUID to add here, so
+# the next install takes over the same LoadBalancer:
+# nginx:
+#   service:
+#     annotations:
+#       kubernetes.digitalocean.com/load-balancer-id: <uuid>
 livekit:
-  # ExternalIP of the node labelled bbb-k8s/role=media (temp-hackweek-3b3nqq). A replaced node
-  # gets a new IP: update it.
-  nodeIP: 142.93.115.37
   config:
     rtc:
-      # Announce only the media node's public IP and its VPC address (the recorder's path);
-      # not the DO anchor, Cilium or CGNAT addresses the node also has.
+      # Announce only the media node's VPC address (the recorder's path) and its public IP, which
+      # the chart adds at pod start; not the DO anchor, Cilium or CGNAT addresses the node also
+      # has.
       ips:
         includes:
-          - 142.93.115.37/32
           - 10.116.0.0/20

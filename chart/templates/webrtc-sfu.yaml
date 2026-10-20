@@ -32,10 +32,13 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.podLabels" . | nindent 8 }}
         {{- include "bbb.selector" "bbb-webrtc-sfu" | nindent 8 }}
     spec:
-      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.webrtcSfu.role) | nindent 6 }}
+      {{- include "bbb.placement" (dict "root" . "role" .Values.webrtcSfu.role) | nindent 6 }}
+      {{- include "bbb.podDefaults" . | nindent 6 }}
+      # The image's webrtc-sfu user, by number so runAsNonRoot can check it.
+      {{- include "bbb.podSecurityContext" (dict "user" 2004) | nindent 6 }}
       imagePullSecrets:
         - name: {{ .Values.imagePullSecret }}
       initContainers:
@@ -43,6 +46,8 @@ spec:
         - name: wait-livekit
           image: {{ include "bbb.image" (dict "root" . "name" "webrtc-sfu" "tag" .Values.webrtcSfu.tag) }}
           command: ["node", "-e", "(async()=>{for(;;){try{await fetch('http://livekit:7880/');return}catch(e){console.log('waiting for livekit');await new Promise(r=>setTimeout(r,2000))}}})()"]
+          {{- include "bbb.initResources" . | nindent 10 }}
+          {{- include "bbb.containerSecurity" (dict "root" .) | nindent 10 }}
       containers:
         - name: bbb-webrtc-sfu
           image: {{ include "bbb.image" (dict "root" . "name" "webrtc-sfu" "tag" .Values.webrtcSfu.tag) }}
@@ -92,3 +97,13 @@ spec:
             periodSeconds: 30
           resources:
             {{- toYaml .Values.webrtcSfu.resources | nindent 12 }}
+          {{- include "bbb.containerSecurity" (dict "root" .) | nindent 10 }}
+          volumeMounts:
+            # npm start keeps its logs and cache under $HOME.
+            - name: home
+              mountPath: /home/webrtc-sfu
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        {{- include "bbb.scratch" (dict "name" "home" "size" "256Mi") | nindent 8 }}
+        {{- include "bbb.scratch" (dict "name" "tmp" "size" "256Mi") | nindent 8 }}

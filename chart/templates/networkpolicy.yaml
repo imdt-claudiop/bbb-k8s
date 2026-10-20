@@ -125,6 +125,7 @@ spec:
         - ipBlock:
             cidr: 0.0.0.0/0
         {{- include "bbb.peer" "bbb-web" | nindent 8 }}
+        {{- include "bbb.peer" "api-smoke" | nindent 8 }}
       ports:
         - { protocol: TCP, port: 8443 }
         - { protocol: TCP, port: 8080 }
@@ -166,6 +167,64 @@ spec:
       "egress" (list (list 6379 (list "redis")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "recording"
       "egress" (list (list 6379 (list "redis")))) }}
+{{- /* helm test (templates/tests): the API through the public host, like a client. */}}
+{{- include "bbb.netpol" (dict "root" . "name" "api-smoke"
+      "egress" (list (list 8443 (list "bbb-nginx")))) }}
+{{- if .Values.externalEgress.enabled }}
+---
+# Outbound HTTP(S) to the internet for what bbb-web and the recording workers fetch or call on
+# behalf of API callers: presentations passed by URL (create, insertDocument),
+# meta_endCallbackUrl, the recording-ready callback. The private, CGNAT and link-local ranges
+# stay out, so such a URL cannot point at the VPC, the pods or the droplet metadata service.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: external-callbacks
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: ["bbb-web", "recording"]
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            {{- with .Values.externalEgress.except }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+      ports:
+        {{- range .Values.externalEgress.ports }}
+        - { protocol: TCP, port: {{ . }} }
+        {{- end }}
+{{- end }}
+{{- if .Values.metrics.enabled }}
+---
+# Prometheus (namespace metrics.namespace) scrapes /metrics on the middleware's port. LiveKit is
+# on the host network, which these policies do not cover.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: metrics-scrape
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "bbb.selector" "gql-middleware" | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.metrics.namespace }}
+      ports:
+        - { protocol: TCP, port: 8378 }
+{{- end }}
 ---
 # livekit-server runs with hostNetwork, so it carries the node identity and plain NetworkPolicy
 # podSelectors never match it. These Cilium policies name the node entities instead, only on

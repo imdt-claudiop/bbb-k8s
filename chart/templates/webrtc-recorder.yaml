@@ -30,16 +30,16 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.podLabels" . | nindent 8 }}
         {{- include "bbb.selector" "bbb-webrtc-recorder" | nindent 8 }}
+        {{- include "bbb.storageGroupLabel" . | nindent 8 }}
     spec:
-      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
+      {{- include "bbb.placement" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
+      {{- include "bbb.storageAffinity" . | nindent 6 }}
+      {{- include "bbb.podDefaults" . | nindent 6 }}
+      {{- include "bbb.podSecurityContext" (dict "user" 998 "fsGroup" 998) | nindent 6 }}
       imagePullSecrets:
         - name: {{ .Values.imagePullSecret }}
-      securityContext:
-        runAsUser: 998
-        runAsGroup: 998
-        fsGroup: 998
       initContainers:
         # The recorder exits (fatal) when its first Redis connection fails (fresh install).
         {{- include "bbb.waitRedis" . | nindent 8 }}
@@ -71,10 +71,14 @@ spec:
                 command: ["/bin/sh", "-c", "kill -INT 1; sleep 10"]
           resources:
             {{- toYaml .Values.webrtcRecorder.resources | nindent 12 }}
+          {{- include "bbb.containerSecurity" (dict "root" .) | nindent 10 }}
           volumeMounts:
             - name: recordings
               mountPath: /var/lib/bbb-webrtc-recorder
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: recordings
           persistentVolumeClaim:
             claimName: bbb-recorder
+        {{- include "bbb.scratch" (dict "name" "tmp" "size" "256Mi") | nindent 8 }}

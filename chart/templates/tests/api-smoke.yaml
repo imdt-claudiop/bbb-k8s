@@ -1,0 +1,43 @@
+# helm test bbb -n bbb: create, join, getMeetingInfo, getRecordings and end through the public
+# host, then the html5 client and LiveKit signaling (chart/scripts/api-smoke.sh). The pod stays
+# after a failure, for its log; the next run replaces it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: api-smoke
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- include "bbb.selector" "api-smoke" | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  restartPolicy: Never
+  {{- include "bbb.podDefaults" . | nindent 2 }}
+  {{- include "bbb.podSecurityContext" (dict "user" 998) | nindent 2 }}
+  imagePullSecrets:
+    - name: {{ .Values.imagePullSecret }}
+  containers:
+    - name: api-smoke
+      # Any image with bash, curl and sha256sum; this one is already pulled for the metadata Job.
+      image: {{ include "bbb.image" (dict "root" . "name" "hasura-metadata" "tag" .Values.hasuraMetadata.tag) }}
+      command: ["bash", "-c"]
+      args:
+        - {{ .Files.Get "scripts/api-smoke.sh" | toJson }}
+      env:
+        - name: PUBLIC_HOST
+          value: {{ include "bbb.publicHost" . | quote }}
+        - name: SHARED_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secrets.salt }}
+              key: security-salt
+      resources:
+        requests: { cpu: 50m, memory: 64Mi }
+        limits: { cpu: 500m, memory: 128Mi }
+      {{- include "bbb.containerSecurity" (dict "root" .) | nindent 6 }}
+      volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    {{- include "bbb.scratch" (dict "name" "tmp" "size" "64Mi") | nindent 4 }}

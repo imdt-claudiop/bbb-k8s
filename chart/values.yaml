@@ -13,7 +13,9 @@ secrets:
   hasura: bbb-hasura  # key: admin-secret
   livekit: bbb-livekit  # keys: api-secret, keys.yaml (<apiKey>: <secret>)
 
-# Node roles (spec D1). Label the nodes with  bbb-k8s/role=<role>.
+# Node roles (spec D1): bbb-k8s/role=<role>, set as a node pool label so replaced nodes keep it
+# (docs/install.md "Node roles"). Every pod also tolerates the NoSchedule taint of its own role,
+# so a pool can be kept for its role by tainting it (bbb-k8s/role=media:NoSchedule).
 nodeRoleLabel: bbb-k8s/role
 
 postgres:
@@ -23,12 +25,22 @@ postgres:
   size: 10Gi
   # bbb-pg.conf of bbb-graphql-server (Hasura may use up to 100 connections).
   maxConnections: 300
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits: { cpu: "1", memory: 2Gi }
 
 redis:
   image: "redis:7.4"
   role: control
   storageClass: do-block-storage-retain
   size: 5Gi
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: 500m, memory: 1Gi }
+  # Below the memory limit, with room for the fork of an AOF rewrite: a full Redis then answers
+  # writes with an error instead of being OOM-killed and replaying its AOF. noeviction: Redis
+  # holds state here (Resque queues, recording events), nothing it may drop.
+  maxmemory: 768mb
 
 bootstrap:
   # Both written by images/build.sh. schemaSha is the single source of truth for the
@@ -43,6 +55,11 @@ clientSettingsOverride: {}
 akkaApps:
   tag: "4.1-66b0bb09-b1"
   role: control
+  # JVM heap, passed to the start script as -J-Xms/-J-Xmx (they override the -Xms130m -Xmx256m
+  # that akka-bbb-apps/build.sbt bakes in, the package's values). The heap, not the container
+  # limit, is what akka runs out of first: raise both together, the limit covering the heap
+  # plus ~512Mi of JVM overhead.
+  heap: { initial: 130m, max: 256m }
   resources:
     requests: { cpu: 500m, memory: 768Mi }
     limits: { cpu: "1", memory: 1280Mi }
@@ -103,8 +120,17 @@ bbbWeb:
   tag: "4.1-66b0bb09-s3a"
   # Extra lines for /etc/bigbluebutton/bbb-web.properties (securitySalt comes from the Secret).
   properties: {}
+  # JVM heap (the entrypoint's defaults, those of bbb-web.service). The rest of the memory limit
+  # is for the conversion tools, which run in the same container.
+  heap: { initial: 384m, max: 384m }
+  # Hard memory cap of each presentation conversion (MemoryMax of the package's
+  # run-in-systemd.sh). Without it a single document could take the whole container, JVM
+  # included, past its limit.
+  conversionMemoryMax: 640M
+  # Guaranteed QoS (requests = limits): bbb-web shares the storage node with the recording
+  # worker's ffmpeg, and Guaranteed pods are the last the kubelet evicts and the kernel kills.
   resources:
-    requests: { cpu: "1", memory: 1536Mi }
+    requests: { cpu: "2", memory: 3Gi, ephemeral-storage: 2Gi }
     limits: { cpu: "2", memory: 3Gi }
 
 nginx:
@@ -117,20 +143,28 @@ nginx:
     # Local: the LB only sends to the node running nginx and the client IP is preserved, which
     # is what lets the NetworkPolicy ipBlock admit external clients.
     externalTrafficPolicy: Local
+    # Keep the Service, and so the LoadBalancer and its IP, on helm uninstall (docs/install.md
+    # "Keeping the public IP").
+    keep: false
     annotations:
       service.beta.kubernetes.io/do-loadbalancer-name: bbb-k8s
       service.beta.kubernetes.io/do-loadbalancer-size-unit: "1"
       service.beta.kubernetes.io/do-loadbalancer-healthcheck-protocol: tcp
   resources:
-    requests: { cpu: 100m, memory: 128Mi }
+    requests: { cpu: 100m, memory: 128Mi, ephemeral-storage: 1Gi }
     limits: { cpu: "1", memory: 512Mi }
 
 # --- Media: LiveKit, bbb-webrtc-sfu (LiveKit module only), bbb-webrtc-recorder ----------------
 livekit:
   image: "livekit/livekit-server:v1.9.12"   # the version the bbb-livekit package builds
   role: media
-  # Public IP of the media node, announced in ICE candidates (spec D4). Set per cluster.
+  # Public IP of the media node, added to rtc.ips.includes when that list is set (spec D4).
+  # Empty: read at pod start from the DigitalOcean metadata service of the node LiveKit runs on,
+  # so a replaced media node needs no change here. Set it only to pin an address.
   nodeIP: ""
+  # Prometheus metrics on the media node (host network), /metrics on this port; 0 turns them
+  # off. The DOKS firewall filters the port from outside.
+  prometheusPort: 6789
   # Key id (not a secret: it travels in every token header); the secret is in bbb-livekit.
   apiKey: bbbk8s
   # Overrides merged over the package's livekit.yaml (chart/files/livekit.yaml).
@@ -143,13 +177,15 @@ livekit:
       allow_tcp_fallback: true
       # Pods cannot reach a node's public IP (measured: TCP to the media node's public IP times
       # out from any pod, its VPC IP answers), and bbb-webrtc-recorder joins rooms from inside
-      # the cluster. With use_external_ip LiveKit maps the public interface through STUN and
-      # keeps the VPC address as a host candidate, which the recorder can use; external
-      # clients still get the public one. node_ip stays as the fallback.
+      # the cluster. With use_external_ip LiveKit maps each local address through STUN and keeps
+      # the ones STUN cannot map, like the VPC address the recorder uses; external clients still
+      # get the public one. It also overrides node_ip, which is therefore not set.
       use_external_ip: true
   resources:
+    # No CPU limit: the media node is LiveKit's own, and CFS throttling at a limit delays live
+    # media while the node has idle cores.
     requests: { cpu: "1", memory: 512Mi }
-    limits: { cpu: "2", memory: 2Gi }
+    limits: { memory: 2Gi }
 
 webrtcSfu:
   tag: "4.1-66b0bb09-s5a"
@@ -178,5 +214,44 @@ recording:
       requests: { cpu: 50m, memory: 128Mi }
       limits: { cpu: 500m, memory: 512Mi }
     resqueWorker:
-      requests: { cpu: 750m, memory: 896Mi }
+      requests: { cpu: 750m, memory: 896Mi, ephemeral-storage: 2Gi }
       limits: { cpu: "3", memory: 3Gi }
+  # The daily cleanup of a package install (bigbluebutton-config/cron.daily/bigbluebutton), as a
+  # CronJob next to the volumes. Days to keep, with the defaults of
+  # /etc/default/bigbluebutton-cron-config.
+  cleanup:
+    enabled: true
+    schedule: "25 6 * * *"   # UTC
+    history: 5           # presentations of past meetings, recorder raw files
+    unrecordedDays: 14   # raw data of meetings without recording marks
+    publishedDays: 14    # raw data of published recordings
+    logHistory: 28       # recording logs
+
+# --- Cluster-wide policy -------------------------------------------------------------------
+# Outbound HTTP(S) of bbb-web and the recording workers: presentations passed by URL to create
+# and insertDocument, meta_endCallbackUrl, the recording-ready callback. The private, CGNAT and
+# link-local ranges stay closed, so a URL given by an API caller cannot reach the VPC, the pods
+# or the droplet metadata service.
+externalEgress:
+  enabled: true
+  ports: [80, 443]
+  except:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 100.64.0.0/10
+    - 169.254.0.0/16
+
+# Prometheus scraping (docs/install.md "Metrics"): PodMonitors for LiveKit and graphql-middleware
+# when the Prometheus Operator CRDs exist, and an ingress allow from the Prometheus namespace.
+metrics:
+  enabled: true
+  namespace: monitoring
+  # Labels the Prometheus podMonitorSelector expects (e.g. release: kube-prometheus-stack).
+  podMonitorLabels: {}
+
+# Container hardening (docs/install.md "Pod security"). A read-only root filesystem is off by
+# default: turning it on is the experiment that shows every path a service writes outside the
+# scratch volumes the chart mounts.
+podSecurity:
+  readOnlyRootFilesystem: false

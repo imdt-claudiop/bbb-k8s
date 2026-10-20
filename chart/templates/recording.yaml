@@ -38,20 +38,31 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.podLabels" . | nindent 8 }}
         {{- include "bbb.selector" "recording" | nindent 8 }}
+        {{- include "bbb.storageGroupLabel" . | nindent 8 }}
       annotations:
         bbb-k8s/config-sha: {{ toYaml $config | sha256sum | trunc 16 | quote }}
     spec:
-      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
+      {{- include "bbb.placement" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
+      {{- include "bbb.storageAffinity" . | nindent 6 }}
+      {{- include "bbb.podDefaults" . | nindent 6 }}
+      {{- include "bbb.podSecurityContext" (dict "user" 998 "fsGroup" 998) | nindent 6 }}
       imagePullSecrets:
         - name: {{ .Values.imagePullSecret }}
-      securityContext:
-        runAsUser: 998
-        runAsGroup: 998
-        fsGroup: 998
       initContainers:
         {{- include "bbb.waitRedis" . | nindent 8 }}
+        # The stage logs (archive-<id>.log, presentation/process-<id>.log) live on bbb-data, so
+        # the log of a failed recording survives a pod restart (the cleanup CronJob prunes them).
+        # Created here as 998: a subPath directory the kubelet creates belongs to root.
+        - name: log-dir
+          image: {{ include "bbb.image" (dict "root" . "name" "recording" "tag" .Values.recording.tag) }}
+          command: ["mkdir", "-p", "/var/bigbluebutton/log"]
+          {{- include "bbb.initResources" . | nindent 10 }}
+          {{- include "bbb.containerSecurity" (dict "root" .) | nindent 10 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/bigbluebutton
       containers:
         {{- range $c := list (dict "name" "rap-starter" "res" "rapStarter" "args" (list "bundle" "exec" "ruby" "rap-starter.rb"))
                              (dict "name" "resque-worker" "res" "resqueWorker" "args" (list "bundle" "exec" "rake" "-f" "Rakefile" "resque:workers")) }}
@@ -73,6 +84,7 @@ spec:
             {{- end }}
           resources:
             {{- toYaml (index $.Values.recording.resources $c.res) | nindent 12 }}
+          {{- include "bbb.containerSecurity" (dict "root" $) | nindent 10 }}
           volumeMounts:
             - name: data
               mountPath: /var/bigbluebutton
@@ -81,11 +93,15 @@ spec:
             - name: config
               mountPath: /usr/local/bigbluebutton/core/scripts/bigbluebutton.yml
               subPath: bigbluebutton.yml
+            # The entrypoint writes bbb-web.properties here (securitySalt for the callback).
+            - name: etc
+              mountPath: /etc/bigbluebutton
             - name: config
               mountPath: /etc/bigbluebutton/recording/recording.yml
               subPath: bigbluebutton.yml
-            - name: logs
+            - name: data
               mountPath: /var/log/bigbluebutton
+              subPath: log
             - name: tmp
               mountPath: /tmp
         {{- end }}
@@ -99,7 +115,5 @@ spec:
         - name: config
           configMap:
             name: recording-config
-        - name: logs
-          emptyDir: {}
-        - name: tmp
-          emptyDir: {}
+        {{- include "bbb.scratch" (dict "name" "etc" "size" "16Mi") | nindent 8 }}
+        {{- include "bbb.scratch" (dict "name" "tmp" "size" "2Gi") | nindent 8 }}

@@ -1,0 +1,300 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "bbb chart values",
+  "description": "Unknown keys fail the render, so a typo in a cluster file is an error instead of a silently ignored value. Free-form maps (component config overrides, annotations) are only typed.",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "quantities": {
+      "type": "object",
+      "additionalProperties": { "type": ["string", "number"] }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requests": { "$ref": "#/definitions/quantities" },
+        "limits": { "$ref": "#/definitions/quantities" }
+      }
+    },
+    "role": {
+      "description": "Value of the node role label (nodeRoleLabel) the workload runs on.",
+      "type": "string",
+      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+    },
+    "tag": { "type": "string" },
+    "image": { "type": "string", "minLength": 1 },
+    "size": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?([KMGTPE]i?)?$" },
+    "heap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["initial", "max"],
+      "properties": {
+        "initial": { "type": "string", "pattern": "^[0-9]+[kKmMgG]$" },
+        "max": { "type": "string", "pattern": "^[0-9]+[kKmMgG]$" }
+      }
+    },
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": { "type": ["string", "number", "boolean"] }
+    },
+    "days": { "type": "integer", "minimum": 0 },
+    "cidr": { "type": "string", "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}/[0-9]{1,2}$" }
+  },
+  "properties": {
+    "bbb": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sourceSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+      }
+    },
+    "registry": { "type": "string", "minLength": 1 },
+    "imagePullSecret": { "type": "string" },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "db": { "type": "string" },
+        "salt": { "type": "string" },
+        "hasura": { "type": "string" },
+        "livekit": { "type": "string" }
+      }
+    },
+    "nodeRoleLabel": { "type": "string", "minLength": 1 },
+    "postgres": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": { "$ref": "#/definitions/image" },
+        "role": { "$ref": "#/definitions/role" },
+        "storageClass": { "type": "string" },
+        "size": { "$ref": "#/definitions/size" },
+        "maxConnections": { "type": "integer", "minimum": 1 },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "redis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": { "$ref": "#/definitions/image" },
+        "role": { "$ref": "#/definitions/role" },
+        "storageClass": { "type": "string" },
+        "size": { "$ref": "#/definitions/size" },
+        "resources": { "$ref": "#/definitions/resources" },
+        "maxmemory": { "type": "string", "pattern": "^[0-9]+([kKmMgG][bB]?)?$" }
+      }
+    },
+    "bootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tag": { "$ref": "#/definitions/tag" },
+        "schemaSha": { "type": "string", "pattern": "^([0-9a-f]{64})?$" }
+      }
+    },
+    "clientSettingsOverride": { "type": "object" },
+    "akkaApps": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tag": { "$ref": "#/definitions/tag" },
+        "role": { "$ref": "#/definitions/role" },
+        "heap": { "$ref": "#/definitions/heap" },
+        "resources": { "$ref": "#/definitions/resources" },
+        "bbbWebAPI": { "type": "string" },
+        "graphqlMiddlewareAPI": { "type": "string" }
+      }
+    },
+    "hasura": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tag": { "$ref": "#/definitions/tag" },
+        "role": { "$ref": "#/definitions/role" },
+        "env": { "$ref": "#/definitions/stringMap" },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "hasuraMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tag": { "$ref": "#/definitions/tag" },
+        "metadataSha": { "type": "string", "pattern": "^([0-9a-f]{64})?$" }
+      }
+    },
+    "graphqlActions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tag": { "$ref": "#/definitions/tag" },
+        "role": { "$ref": "#/definitions/role" },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "graphqlMiddleware": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tag": { "$ref": "#/definitions/tag" },
+        "role": { "$ref": "#/definitions/role" },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "publicHost": {
+      "description": "Empty is accepted here so the chart can fail with its own message.",
+      "type": "string",
+      "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$"
+    },
+    "bbbData": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "storageClass": { "type": "string" },
+        "size": { "$ref": "#/definitions/size" },
+        "role": { "$ref": "#/definitions/role" }
+      }
+    },
+    "bbbWeb": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tag": { "$ref": "#/definitions/tag" },
+        "properties": { "$ref": "#/definitions/stringMap" },
+        "heap": { "$ref": "#/definitions/heap" },
+        "conversionMemoryMax": { "type": "string", "pattern": "^[0-9]+[KMG]?$" },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "nginx": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tag": { "$ref": "#/definitions/tag" },
+        "tlsSecret": { "type": "string" },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": { "enum": ["LoadBalancer", "NodePort", "ClusterIP"] },
+            "externalTrafficPolicy": { "enum": ["Local", "Cluster"] },
+            "keep": { "type": "boolean" },
+            "annotations": { "$ref": "#/definitions/stringMap" }
+          }
+        },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "livekit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": { "$ref": "#/definitions/image" },
+        "role": { "$ref": "#/definitions/role" },
+        "nodeIP": {
+          "type": "string",
+          "pattern": "^$|^[0-9]{1,3}(\\.[0-9]{1,3}){3}$"
+        },
+        "prometheusPort": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "apiKey": { "type": "string", "minLength": 1 },
+        "config": {
+          "description": "Overrides merged over the package's livekit.yaml; only rtc.ips is checked.",
+          "type": "object",
+          "properties": {
+            "rtc": {
+              "type": "object",
+              "properties": {
+                "ips": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "includes": { "type": "array", "items": { "$ref": "#/definitions/cidr" } },
+                    "excludes": { "type": "array", "items": { "$ref": "#/definitions/cidr" } }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "webrtcSfu": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tag": { "$ref": "#/definitions/tag" },
+        "role": { "$ref": "#/definitions/role" },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "webrtcRecorder": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tag": { "$ref": "#/definitions/tag" },
+        "storageClass": { "type": "string" },
+        "size": { "$ref": "#/definitions/size" },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "recording": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tag": { "$ref": "#/definitions/tag" },
+        "config": { "type": "object" },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rapStarter": { "$ref": "#/definitions/resources" },
+            "resqueWorker": { "$ref": "#/definitions/resources" }
+          }
+        },
+        "cleanup": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "schedule": { "type": "string", "minLength": 9 },
+            "history": { "$ref": "#/definitions/days" },
+            "unrecordedDays": { "$ref": "#/definitions/days" },
+            "publishedDays": { "$ref": "#/definitions/days" },
+            "logHistory": { "$ref": "#/definitions/days" }
+          }
+        }
+      }
+    },
+    "externalEgress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "ports": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1, "maximum": 65535 }
+        },
+        "except": { "type": "array", "items": { "$ref": "#/definitions/cidr" } }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "namespace": { "type": "string" },
+        "podMonitorLabels": { "$ref": "#/definitions/stringMap" }
+      }
+    },
+    "podSecurity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "readOnlyRootFilesystem": { "type": "boolean" }
+      }
+    }
+  }
+}
