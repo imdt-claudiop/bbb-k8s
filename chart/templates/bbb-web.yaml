@@ -1,3 +1,14 @@
+{{- define "bbb.webProperties" -}}
+bigbluebutton.web.serverURL=https://{{ include "bbb.publicHost" . }}
+redisHost=redis
+redisPort=6379
+# Written by the bbb-web package postinst (after-install.sh) over the war defaults.
+placementsThreshold=800
+imageTagThreshold=800
+{{- range $k, $v := .Values.bbbWeb.properties }}
+{{ $k }}={{ $v }}
+{{- end }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -7,15 +18,7 @@ metadata:
 data:
   # Template of /etc/bigbluebutton/bbb-web.properties; the entrypoint appends securitySalt.
   bbb-web.properties: |
-    bigbluebutton.web.serverURL=https://{{ .Values.publicHost }}
-    redisHost=redis
-    redisPort=6379
-    # Written by the bbb-web package postinst (after-install.sh) over the war defaults.
-    placementsThreshold=800
-    imageTagThreshold=800
-    {{- range $k, $v := .Values.bbbWeb.properties }}
-    {{ $k }}={{ $v }}
-    {{- end }}
+    {{- include "bbb.webProperties" . | nindent 4 }}
 ---
 apiVersion: v1
 kind: Service
@@ -50,6 +53,10 @@ spec:
       labels:
         {{- include "bbb.labels" . | nindent 8 }}
         {{- include "bbb.selector" "bbb-web" | nindent 8 }}
+      annotations:
+        # The properties are rendered at start: restart bbb-web when they change. bbb-web holds
+        # meetings in memory, so such a change ends them (spec L1): maintenance window.
+        bbb-k8s/properties-sha: {{ include "bbb.webProperties" . | sha256sum | trunc 16 | quote }}
     spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
       imagePullSecrets:

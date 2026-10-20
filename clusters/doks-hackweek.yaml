@@ -1,0 +1,4 @@
+# Values of the DOKS hackweek cluster (NYC1). Non-secret; written from scripts/public-host.sh
+# after the LoadBalancer of svc/bbb-nginx got its IP. A reinstall that recreates the
+# LoadBalancer gets a new IP: run the script again and update this line.
+publicHost: bbbk8s-ip-129-212-138-58.bbb.imdt.dev

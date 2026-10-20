@@ -56,3 +56,7 @@ bbb-bootstrap-{{ printf "%s%s" .Values.bootstrap.schemaSha .Values.bootstrap.tag
       done
       echo "bbb_graphql is at $EXPECTED"
 {{- end }}
+
+{{- define "bbb.publicHost" -}}
+{{ required "publicHost is empty: set it per cluster (clusters/<name>.yaml, scripts/public-host.sh)" .Values.publicHost }}
+{{- end }}

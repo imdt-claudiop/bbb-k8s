@@ -101,10 +101,59 @@ spec:
       "ingress" (list (list 8378 (list "akka-apps" "bbb-nginx")))
       "egress" (list (list 6379 (list "redis")) (list 8085 (list "hasura")) (list 8093 (list "gql-actions"))
                      (list 8901 (list "akka-apps")) (list 8090 (list "bbb-web")))) }}
-{{- include "bbb.netpol" (dict "root" . "name" "bbb-web"
-      "ingress" (list (list 8090 (list "bbb-nginx" "gql-middleware" "akka-apps")))
-      "egress" (list (list 6379 (list "redis")))) }}
-{{- /* No ingress allow yet: the entry point arrives with the HTTPS slice; until then it is reached
-       through kubectl port-forward, which does not go through NetworkPolicy. */}}
 {{- include "bbb.netpol" (dict "root" . "name" "bbb-nginx"
       "egress" (list (list 8090 (list "bbb-web")) (list 8378 (list "gql-middleware")) (list 8085 (list "hasura")))) }}
+---
+# Public entry: the DigitalOcean LoadBalancer forwards clients to nginx with their own source IP
+# (externalTrafficPolicy Local), so an ipBlock admits them. bbb-web also reaches nginx through
+# the public host when it downloads the default presentation.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bbb-nginx-public
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "bbb.selector" "bbb-nginx" | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+        {{- include "bbb.peer" "bbb-web" | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 8443 }
+        - { protocol: TCP, port: 8080 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bbb-web
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "bbb.selector" "bbb-web" | nindent 6 }}
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        {{- include "bbb.peer" "bbb-nginx" | nindent 8 }}
+        {{- include "bbb.peer" "gql-middleware" | nindent 8 }}
+        {{- include "bbb.peer" "akka-apps" | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 8090 }
+  egress:
+    - to:
+        {{- include "bbb.peer" "redis" | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 6379 }
+    # https://<publicHost>/default.pdf (bigbluebutton.properties defaultUploadedPresentation):
+    # Cilium resolves a pod's connection to the LoadBalancer IP in the cluster, so it reaches
+    # nginx directly from the pod IP (observed in the nginx access log), never the public path.
+    - to:
+        {{- include "bbb.peer" "bbb-nginx" | nindent 8 }}
+      ports:
+        - { protocol: TCP, port: 8443 }

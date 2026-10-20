@@ -32,11 +32,20 @@ re-apply them, or set them as node pool labels in the cloud provider.
 
 ## Install
 
+The public host is derived from the IP of the LoadBalancer, which only exists once the chart
+created it, so the first install has two steps:
+
 ```bash
 GHCR_USER=<user> GHCR_TOKEN=<token> scripts/create-secrets.sh   # namespace bbb + Secrets
-helm upgrade --install bbb chart -n bbb --reset-values
+# 1. any host to get the LoadBalancer created
+helm upgrade --install bbb chart -n bbb --reset-values --set publicHost=pending.bbb.imdt.dev
+scripts/public-host.sh            # waits for the IP, checks public DNS, prints publicHost=...
+# 2. write that host in clusters/<cluster>.yaml, then from now on:
+helm upgrade --install bbb chart -n bbb --reset-values -f clusters/<cluster>.yaml
 kubectl -n bbb get pods -w
 ```
+
+`publicHost` has no default: the chart refuses to render without it.
 
 `create-secrets.sh` generates the database passwords (`bbb-db`), the shared secret
 (`bbb-salt`) and the Hasura admin secret (`bbb-hasura`) once and keeps them on later runs; the
@@ -55,21 +64,31 @@ time).
 `helm upgrade` with no values flags reuses the values of the previous release, so a one-off
 `--set` (for example a wrong `bootstrap.schemaSha`) silently stays in place.
 
-## Reaching the client (until the public entry point exists)
+## Public entry point
 
 Every client and API URL derives from `publicHost` (`bigbluebutton.web.serverURL`), and the
-client always uses `https`/`wss` on port 443 of the page's host. Until the public entry point
-exists, `publicHost` is `bbbk8s-ip-127-0-0-1.bbb.imdt.dev`, which public DNS resolves to
-127.0.0.1, and the front nginx terminates TLS for it. Forward port 443 on the machine with the
-browser:
+client always uses `https`/`wss` on port 443 of the page's host.
 
-```bash
-sudo kubectl -n bbb port-forward svc/bbb-nginx 443:443
-# then open https://bbbk8s-ip-127-0-0-1.bbb.imdt.dev/ or a join URL
-```
-
-If something already listens on 443 there (another BigBlueButton), run the port-forward and the
-browser inside a container, which has its own loopback.
+- `svc/bbb-nginx` is a `LoadBalancer`: the DigitalOcean cloud controller creates a load
+  balancer in TCP mode (`nginx.service.annotations`) and the BBB nginx terminates TLS itself
+  with the `bbb-tls` Secret, as on a package install. There is no Ingress controller:
+  ingress-nginx is archived upstream, and an L7 layer in front would duplicate TLS and add
+  WebSocket and upload timeouts to tune. The Cilium Gateway API of the cluster is the natural
+  L7 entry for a later multi-cell router.
+- `externalTrafficPolicy: Local` keeps the client IP, so the nginx access log shows real
+  clients and the NetworkPolicy `bbb-nginx-public` admits them with an `ipBlock`. The node
+  IPs and NodePorts stay closed from outside.
+- `<prefix>-ip-<IP with dashes>.bbb.imdt.dev` resolves to that IP on public DNS, and the
+  `*.bbb.imdt.dev` wildcard covers it. `scripts/public-host.sh` prints the name and checks the
+  resolution.
+- bbb-web downloads `https://<publicHost>/default.pdf` when a meeting is created. Cilium
+  resolves a pod's connection to the load balancer IP inside the cluster, so the request
+  reaches nginx from the bbb-web pod IP (allowed by the `bbb-web` egress rule).
+- Changing `publicHost` restarts bbb-web (meetings in progress end) and nginx, through the
+  `properties-sha` / `site-sha` pod annotations.
+- Deleting the release or the namespace deletes the load balancer; a new install gets a new
+  IP and therefore a new host (a DigitalOcean reserved IP would keep it, but needs an API
+  token).
 
 ## How bbb-web and the front nginx are wired
 
@@ -83,8 +102,7 @@ browser inside a container, which has its own loopback.
   the default assets of bigbluebutton-config, and the package nginx fragments with their
   loopback upstreams rewritten to `bbb-web:8090`, `gql-middleware:8378` and `hasura:8085`. The
   dashboard app is copied into `/var/bigbluebutton/learning-dashboard` by an init container.
-  It has no NetworkPolicy ingress allow yet (nothing in the cluster calls it); port-forward
-  does not go through NetworkPolicy.
+  Its ingress is the public entry point below.
 
 ## How the GraphQL stack is wired
 
@@ -152,9 +170,6 @@ Then confirm in the DigitalOcean panel or with `doctl compute volume list` that 
 - akka-apps `/healthz` answers 503 until bbb-web and the GraphQL middleware exist (later
   slices); the probes are TCP only for that reason.
 - One replica per service; restarting akka-apps ends the meetings it holds (spec L1, L2).
-- The default presentation is missing: bbb-web downloads `${serverURL}/default.pdf`, and
-  inside its pod the provisional host resolves to 127.0.0.1, so the download fails and meetings
-  start with no slides. Fixed by the public entry point.
 - No audio or video (LiveKit comes later); the audio dialog can be closed.
 - The middleware panics whenever a Redis receive fails (`internal/websrv/rediscli.go`
   dereferences the nil message): an init container holds it until Redis answers at start, but

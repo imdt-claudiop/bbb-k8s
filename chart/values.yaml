@@ -87,10 +87,11 @@ graphqlMiddleware:
     limits: { cpu: 500m, memory: 512Mi }
 
 # --- Front: bbb-web, nginx (html5 client, learning dashboard) -------------------------------
-# Host every URL of the client and the API derives from (bigbluebutton.web.serverURL). Must be
-# covered by the TLS Secret. bbbk8s-ip-127-0-0-1.bbb.imdt.dev resolves to 127.0.0.1 (public DNS
-# of bbb.imdt.dev) and is reached through `kubectl port-forward svc/bbb-nginx 443:443`.
-publicHost: bbbk8s-ip-127-0-0-1.bbb.imdt.dev
+# Host every URL of the client and the API derives from (bigbluebutton.web.serverURL) and the
+# name the front nginx answers to; must be covered by the TLS Secret. Set per cluster (e.g.
+# clusters/doks-hackweek.yaml): <prefix>-ip-<LB IP with dashes>.bbb.imdt.dev, which public DNS
+# resolves to the LoadBalancer IP (scripts/public-host.sh). No default on purpose.
+publicHost: ""
 
 bbbData:
   storageClass: do-block-storage-retain
@@ -108,6 +109,17 @@ bbbWeb:
 nginx:
   tag: "4.1-66b0bb09-s3a"
   tlsSecret: bbb-tls  # kubernetes.io/tls, created by scripts/create-secrets.sh
+  # Public entry point: a DigitalOcean LoadBalancer in TCP mode in front of this nginx, which
+  # terminates TLS itself (docs/install.md, "Public entry point").
+  service:
+    type: LoadBalancer
+    # Local: the LB only sends to the node running nginx and the client IP is preserved, which
+    # is what lets the NetworkPolicy ipBlock admit external clients.
+    externalTrafficPolicy: Local
+    annotations:
+      service.beta.kubernetes.io/do-loadbalancer-name: bbb-k8s
+      service.beta.kubernetes.io/do-loadbalancer-size-unit: "1"
+      service.beta.kubernetes.io/do-loadbalancer-healthcheck-protocol: tcp
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: "1", memory: 512Mi }

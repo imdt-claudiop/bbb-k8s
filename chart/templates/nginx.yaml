@@ -1,3 +1,34 @@
+{{- define "bbb.nginxSite" -}}
+server {
+  listen 8080;
+  server_name {{ include "bbb.publicHost" . }};
+  access_log /dev/stdout;
+  return 301 https://$host$request_uri;
+}
+server {
+  listen 8443 ssl;
+  http2 on;
+  server_name {{ include "bbb.publicHost" . }};
+  ssl_certificate     /etc/nginx/tls/tls.crt;
+  ssl_certificate_key /etc/nginx/tls/tls.key;
+  ssl_protocols TLSv1.2 TLSv1.3;
+  access_log /dev/stdout;
+  absolute_redirect off;
+
+  # This variable is used instead of $scheme by bigbluebutton nginx include
+  # files, so $scheme can be overridden in reverse-proxy configurations.
+  set $real_scheme $scheme;
+
+  # BigBlueButton assets and static content.
+  location / {
+    root   /var/www/bigbluebutton-default/assets;
+    index  index.html index.htm;
+    expires 1m;
+  }
+
+  include /usr/share/bigbluebutton/nginx/*.nginx;
+}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -8,35 +39,7 @@ data:
   # The site of build/packages-template/bbb-html5/bigbluebutton.nginx, with TLS terminated here
   # as a bbb-install server does. The package fragments live in /usr/share/bigbluebutton/nginx.
   bigbluebutton.conf: |
-    server {
-      listen 8080;
-      server_name {{ .Values.publicHost }};
-      access_log /dev/stdout;
-      return 301 https://$host$request_uri;
-    }
-    server {
-      listen 8443 ssl;
-      http2 on;
-      server_name {{ .Values.publicHost }};
-      ssl_certificate     /etc/nginx/tls/tls.crt;
-      ssl_certificate_key /etc/nginx/tls/tls.key;
-      ssl_protocols TLSv1.2 TLSv1.3;
-      access_log /dev/stdout;
-      absolute_redirect off;
-
-      # This variable is used instead of $scheme by bigbluebutton nginx include
-      # files, so $scheme can be overridden in reverse-proxy configurations.
-      set $real_scheme $scheme;
-
-      # BigBlueButton assets and static content.
-      location / {
-        root   /var/www/bigbluebutton-default/assets;
-        index  index.html index.htm;
-        expires 1m;
-      }
-
-      include /usr/share/bigbluebutton/nginx/*.nginx;
-    }
+    {{- include "bbb.nginxSite" . | nindent 4 }}
 ---
 apiVersion: v1
 kind: Service
@@ -44,7 +47,15 @@ metadata:
   name: bbb-nginx
   labels:
     {{- include "bbb.labels" . | nindent 4 }}
+  {{- with .Values.nginx.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
+  type: {{ .Values.nginx.service.type }}
+  {{- if eq .Values.nginx.service.type "LoadBalancer" }}
+  externalTrafficPolicy: {{ .Values.nginx.service.externalTrafficPolicy }}
+  {{- end }}
   selector:
     {{- include "bbb.selector" "bbb-nginx" | nindent 4 }}
   ports:
@@ -74,6 +85,9 @@ spec:
       labels:
         {{- include "bbb.labels" . | nindent 8 }}
         {{- include "bbb.selector" "bbb-nginx" | nindent 8 }}
+      annotations:
+        # nginx reads its site only at start: restart it when the site changes (e.g. publicHost).
+        bbb-k8s/site-sha: {{ include "bbb.nginxSite" . | sha256sum | trunc 16 | quote }}
     spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
       imagePullSecrets:
