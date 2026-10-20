@@ -11,6 +11,11 @@ NS=${NS:-bbb}
 : "${GHCR_USER:?}" "${GHCR_TOKEN:?}"
 
 kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS"
+# Pod Security Admission in warn and audit mode: every apply lists what a pod still does that
+# the restricted profile forbids (LiveKit's host network, the root entrypoints of Postgres and
+# Redis), without blocking anything (docs/install.md "Pod security").
+kubectl label namespace "$NS" --overwrite \
+  pod-security.kubernetes.io/warn=restricted pod-security.kubernetes.io/audit=restricted >/dev/null
 
 rand() { openssl rand -hex 24; }
 
@@ -48,8 +53,16 @@ else
   curl -fsS -o "$tls_dir/tls.crt" http://a.bbb.imdt.dev/certs_new/fullchain.pem
   curl -fsS -o "$tls_dir/tls.key" http://a.bbb.imdt.dev/certs_new/privkey.pem
 fi
+old_crt=$(kubectl -n "$NS" get secret bbb-tls -o jsonpath='{.data.tls\.crt}' 2>/dev/null || true)
 kubectl -n "$NS" create secret tls bbb-tls --cert="$tls_dir/tls.crt" --key="$tls_dir/tls.key" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+# nginx reads its certificate only at start: the kubelet updates the mounted files, but nginx
+# would keep serving the old one. A restart of nginx does not end meetings (clients reconnect).
+if [ -n "$old_crt" ] && [ "$old_crt" != "$(base64 < "$tls_dir/tls.crt" | tr -d '\n')" ] \
+  && kubectl -n "$NS" get deployment bbb-nginx >/dev/null 2>&1; then
+  echo "certificate changed: restarting bbb-nginx"
+  kubectl -n "$NS" rollout restart deployment bbb-nginx >/dev/null
+fi
 
 # The pull Secret is refreshed every run, so a rotated token only needs a re-run.
 kubectl -n "$NS" create secret docker-registry ghcr-pull \
