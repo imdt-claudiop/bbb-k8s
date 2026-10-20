@@ -84,7 +84,7 @@ spec:
 {{- include "bbb.netpol" (dict "root" . "name" "redis"
       "ingress" (list (list 6379 (list "akka-apps" "gql-actions" "gql-middleware" "bbb-web"
                                        "bbb-webrtc-sfu" "bbb-webrtc-recorder" "recording" "bbb-shared-notes"
-                                       "bbb-export-annotations" "recording-cleanup")))) }}
+                                       "bbb-export-annotations" "recording-cleanup" "bbb-webhooks")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "bbb-shared-notes"
       "ingress" (list (list 8787 (list "bbb-nginx")))
       "egress" (list (list 5432 (list "postgres")) (list 6379 (list "redis")) (list 8090 (list "bbb-web")))) }}
@@ -112,7 +112,33 @@ spec:
                      (list 8901 (list "akka-apps")) (list 8090 (list "bbb-web")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "bbb-nginx"
       "egress" (list (list 8090 (list "bbb-web")) (list 8378 (list "gql-middleware")) (list 8085 (list "hasura"))
-                     (list 3008 (list "bbb-webrtc-sfu")) (list 8787 (list "bbb-shared-notes")))) }}
+                     (list 3008 (list "bbb-webrtc-sfu")) (list 8787 (list "bbb-shared-notes"))
+                     (list 3005 (list "bbb-webhooks")))) }}
+{{- include "bbb.netpol" (dict "root" . "name" "bbb-webhooks"
+      "ingress" (list (list 3005 (list "bbb-nginx")))
+      "egress" (list (list 6379 (list "redis")))) }}
+---
+# bbb-webhooks POSTs events to registered callback URLs, which are external by design. Allow egress to
+# the internet on the usual HTTP(S) ports (the hooks API requires the shared secret, so only authorized
+# callers register a callback). Redis and the nginx ingress are handled by the policy above.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bbb-webhooks-callbacks
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "bbb.selector" "bbb-webhooks" | nindent 6 }}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - { protocol: TCP, port: 80 }
+        - { protocol: TCP, port: 443 }
 ---
 # Public entry: the DigitalOcean LoadBalancer forwards clients to nginx with their own source IP
 # (externalTrafficPolicy Local), so an ipBlock admits them. bbb-web also reaches nginx through

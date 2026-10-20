@@ -3,7 +3,7 @@
 #
 # Usage: images/build.sh <component>...
 #   components: akka-apps bootstrap hasura hasura-metadata graphql-middleware graphql-actions
-#               shared-notes export-annotations bbb-web nginx webrtc-sfu webrtc-recorder recording
+#               shared-notes export-annotations bbb-web nginx webrtc-sfu webrtc-recorder webhooks recording
 #
 # Env:
 #   BBB_REPO   path to a bigbluebutton monorepo clone (required unless SRC_DIR is set)
@@ -37,7 +37,7 @@ if [ -z "${SRC_DIR:-}" ]; then
     bbb-graphql-middleware bbb-graphql-actions bbb-export-annotations \
     bbb-common-web bigbluebutton-web bigbluebutton-html5 bbb-learning-dashboard bigbluebutton-config \
     build/packages-template bbb-webrtc-sfu.placeholder.sh bbb-webrtc-recorder.placeholder.sh \
-    bbb-playback.placeholder.sh record-and-playback \
+    bbb-playback.placeholder.sh bbb-webhooks.placeholder.sh record-and-playback \
     bigbluebutton-html5/private/config/settings.yml | tar -x -C "$SRC_DIR"
 fi
 
@@ -106,6 +106,7 @@ for c in "$@"; do
       cp "$SRC_DIR/build/packages-template/bbb-livekit/livekit.yaml" "$ROOT/chart/files/livekit.yaml"
       ;;
     webrtc-recorder) set_value webrtcRecorder tag "$TAG" ;;
+    webhooks) set_value webhooks tag "$TAG" ;;
     recording)
       set_value recording tag "$TAG"
       # The recording config is the package's bigbluebutton.yml plus the chart's overrides.

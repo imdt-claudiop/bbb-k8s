@@ -98,6 +98,13 @@ recordingCleanup:
   # published-recording retention stays OFF (a user decision, see recording-cleanup-cronjob.yaml).
   schedule: "0 3 * * *"
 
+webhooks:
+  tag: "4.1-66b0bb09-20261020202245"
+  role: control
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
 graphqlMiddleware:
   tag: "4.1-66b0bb09-s2a"
   role: control
@@ -126,7 +133,7 @@ bbbWeb:
     limits: { cpu: "2", memory: 3Gi }
 
 nginx:
-  tag: "4.1-66b0bb09-20261020184652"
+  tag: "4.1-66b0bb09-20261020202245"
   tlsSecret: bbb-tls  # kubernetes.io/tls, created by scripts/create-secrets.sh
   # Public entry point: a DigitalOcean LoadBalancer in TCP mode in front of this nginx, which
   # terminates TLS itself (docs/install.md, "Public entry point").

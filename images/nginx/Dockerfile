@@ -51,12 +51,14 @@ COPY --from=src build/packages-template/bbb-webrtc-sfu/webrtc-sfu.nginx /f/webrt
 COPY --from=src build/packages-template/bbb-playback/playback.nginx /f/playback.nginx
 COPY --from=src record-and-playback/presentation/scripts/presentation.nginx /f/presentation.nginx
 COPY --from=src build/packages-template/bbb-shared-notes-server/bbb-shared-notes-server.nginx /f/bbb-shared-notes-server.nginx
+COPY --from=src build/packages-template/bbb-webhooks/webhooks.nginx /f/webhooks.nginx
 RUN sed -i -e 's|http://127.0.0.1:8090|http://bbb-web:8090|g' \
            -e 's|http://127.0.0.1:8378|http://gql-middleware:8378|g' \
            -e 's|http://127.0.0.1:8185|http://hasura:8085|g' \
            -e 's|http://127.0.0.1:7880|http://livekit:7880|g' \
            -e 's|http://127.0.0.1:3008|http://bbb-webrtc-sfu:3008|g' \
-           -e 's|http://localhost:8787|http://bbb-shared-notes:8787|g' /f/*.nginx \
+           -e 's|http://localhost:8787|http://bbb-shared-notes:8787|g' \
+           -e 's|http://127.0.0.1:3005|http://bbb-webhooks:3005|g' /f/*.nginx \
     && ! grep -n '^[^#]*127\.0\.0\.1' /f/*.nginx
 
 FROM ${BUILDER_IMAGE} AS apimate

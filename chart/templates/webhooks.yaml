@@ -1,0 +1,109 @@
+{{- define "bbb.webhooksEnvMap" -}}
+# node-config custom-environment-variables: maps config keys to env var NAMES (highest precedence,
+# so these override the image's config/default.yml regardless of the multi-dir NODE_CONFIG_DIR order).
+bbb:
+  serverDomain: BBB_SERVER_DOMAIN
+  sharedSecret: SHARED_SECRET
+redis:
+  host: REDIS_HOST
+modules:
+  "../db/redis/index.js":
+    config:
+      host: REDIS_HOST
+  "../in/redis/index.js":
+    config:
+      redis:
+        host: REDIS_HOST
+  "../out/webhooks/index.js":
+    config:
+      api:
+        bind: API_BIND
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bbb-webhooks-config
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+data:
+  custom-environment-variables.yml: |
+    {{- include "bbb.webhooksEnvMap" . | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bbb-webhooks
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "bbb.selector" "bbb-webhooks" | nindent 4 }}
+  ports:
+    - name: http
+      port: 3005
+---
+# bbb-webhooks: subscribes to the BBB event channels on Redis and POSTs them to registered callback
+# URLs; exposes the hooks API (create/destroy/list) at /bigbluebutton/api/hooks, proxied by the front
+# nginx (webhooks.nginx fragment) and authenticated with the shared secret. Registered hooks are
+# persisted in Redis (no separate database). Config is overridden via node-config env mapping.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bbb-webhooks
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- include "bbb.selector" "bbb-webhooks" | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "bbb.selector" "bbb-webhooks" | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.selector" "bbb-webhooks" | nindent 8 }}
+      annotations:
+        bbb-k8s/config-sha: {{ include "bbb.webhooksEnvMap" . | sha256sum | trunc 16 | quote }}
+    spec:
+      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.webhooks.role) | nindent 6 }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      containers:
+        - name: bbb-webhooks
+          image: {{ include "bbb.image" (dict "root" . "name" "webhooks" "tag" .Values.webhooks.tag) }}
+          env:
+            - name: BBB_SERVER_DOMAIN
+              value: {{ include "bbb.publicHost" . | quote }}
+            - name: REDIS_HOST
+              value: redis
+            - name: API_BIND
+              value: "0.0.0.0"
+            - name: SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.salt }}
+                  key: security-salt
+          ports:
+            - name: http
+              containerPort: 3005
+          readinessProbe:
+            tcpSocket:
+              port: 3005
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 3005
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.webhooks.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/bigbluebutton/bbb-webhooks
+      volumes:
+        - name: config
+          configMap:
+            name: bbb-webhooks-config
