@@ -1,0 +1,114 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bbb-web-config
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+data:
+  # Template of /etc/bigbluebutton/bbb-web.properties; the entrypoint appends securitySalt.
+  bbb-web.properties: |
+    bigbluebutton.web.serverURL=https://{{ .Values.publicHost }}
+    redisHost=redis
+    redisPort=6379
+    # Written by the bbb-web package postinst (after-install.sh) over the war defaults.
+    placementsThreshold=800
+    imageTagThreshold=800
+    {{- range $k, $v := .Values.bbbWeb.properties }}
+    {{ $k }}={{ $v }}
+    {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bbb-web
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "bbb.selector" "bbb-web" | nindent 4 }}
+  ports:
+    - name: http
+      port: 8090
+---
+# One replica, Recreate: bbb-web keeps meetings, sessions and tokens in memory (spec D9, L1).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bbb-web
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- include "bbb.selector" "bbb-web" | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "bbb.selector" "bbb-web" | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.selector" "bbb-web" | nindent 8 }}
+    spec:
+      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      securityContext:
+        runAsUser: 998
+        runAsGroup: 998
+        fsGroup: 998
+      containers:
+        - name: bbb-web
+          image: {{ include "bbb.image" (dict "root" . "name" "bbb-web" "tag" .Values.bbbWeb.tag) }}
+          env:
+            - name: SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.salt }}
+                  key: security-salt
+          ports:
+            - name: http
+              containerPort: 8090
+          readinessProbe:
+            tcpSocket:
+              port: 8090
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8090
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            {{- toYaml .Values.bbbWeb.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/bigbluebutton
+            - name: config-template
+              mountPath: /etc/bigbluebutton-template
+            - name: etc
+              mountPath: /etc/bigbluebutton
+            - name: client-settings
+              mountPath: /usr/share/bigbluebutton/html5-client/private/config/settings.yml
+              subPath: settings.yml
+            - name: tmp
+              mountPath: /tmp
+            - name: logs
+              mountPath: /usr/share/bbb-web/logs
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: bbb-data
+        - name: config-template
+          configMap:
+            name: bbb-web-config
+        - name: etc
+          emptyDir: {}
+        - name: client-settings
+          configMap:
+            name: client-settings
+        - name: tmp
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}

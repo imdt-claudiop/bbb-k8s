@@ -1,0 +1,15 @@
+# /var/bigbluebutton, shared by the pods of the storage node (spec D2): bbb-web writes
+# presentations and recording markers, nginx serves them. RWO is per node: every pod that mounts
+# it is pinned to the storage role. Recording and export-annotations join in later slices.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bbb-data
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: {{ .Values.bbbData.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.bbbData.size }}

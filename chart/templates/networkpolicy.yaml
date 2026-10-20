@@ -82,14 +82,15 @@ spec:
 {{- include "bbb.netpol" (dict "root" . "name" "postgres"
       "ingress" (list (list 5432 (list "bootstrap" "akka-apps" "hasura" "hasura-metadata")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "redis"
-      "ingress" (list (list 6379 (list "akka-apps" "gql-actions" "gql-middleware")))) }}
+      "ingress" (list (list 6379 (list "akka-apps" "gql-actions" "gql-middleware" "bbb-web")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "bootstrap"
       "egress" (list (list 5432 (list "postgres")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "akka-apps"
       "ingress" (list (list 8901 (list "hasura" "gql-middleware")))
-      "egress" (list (list 5432 (list "postgres")) (list 6379 (list "redis")) (list 8378 (list "gql-middleware")))) }}
+      "egress" (list (list 5432 (list "postgres")) (list 6379 (list "redis")) (list 8378 (list "gql-middleware"))
+                     (list 8090 (list "bbb-web")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "hasura"
-      "ingress" (list (list 8085 (list "gql-middleware" "hasura-metadata")))
+      "ingress" (list (list 8085 (list "gql-middleware" "hasura-metadata" "bbb-nginx")))
       "egress" (list (list 5432 (list "postgres")) (list 8901 (list "akka-apps")) (list 8093 (list "gql-actions")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "hasura-metadata"
       "egress" (list (list 5432 (list "postgres")) (list 8085 (list "hasura")))) }}
@@ -97,6 +98,13 @@ spec:
       "ingress" (list (list 8093 (list "hasura" "gql-middleware")))
       "egress" (list (list 6379 (list "redis")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "gql-middleware"
-      "ingress" (list (list 8378 (list "akka-apps")))
+      "ingress" (list (list 8378 (list "akka-apps" "bbb-nginx")))
       "egress" (list (list 6379 (list "redis")) (list 8085 (list "hasura")) (list 8093 (list "gql-actions"))
                      (list 8901 (list "akka-apps")) (list 8090 (list "bbb-web")))) }}
+{{- include "bbb.netpol" (dict "root" . "name" "bbb-web"
+      "ingress" (list (list 8090 (list "bbb-nginx" "gql-middleware" "akka-apps")))
+      "egress" (list (list 6379 (list "redis")))) }}
+{{- /* No ingress allow yet: the entry point arrives with the HTTPS slice; until then it is reached
+       through kubectl port-forward, which does not go through NetworkPolicy. */}}
+{{- include "bbb.netpol" (dict "root" . "name" "bbb-nginx"
+      "egress" (list (list 8090 (list "bbb-web")) (list 8378 (list "gql-middleware")) (list 8085 (list "hasura")))) }}

@@ -2,8 +2,9 @@
 
 This installs the BigBlueButton 4.1 services built so far, in dependency order: Postgres and
 Redis, the database bootstrap Job, akka-apps, then the GraphQL stack (Hasura with its metadata
-Job, graphql-actions, graphql-middleware). Later slices add bbb-web, nginx and the client, the
-HTTPS entry point, LiveKit and the SFU, and recording.
+Job, graphql-actions, graphql-middleware), then bbb-web and the front nginx with the html5
+client and the learning dashboard. Later slices add the public HTTPS entry point, LiveKit and
+the SFU, and recording.
 
 ## Prerequisites
 
@@ -24,7 +25,8 @@ kubectl label node <node> bbb-k8s/role=data
 ```
 
 Postgres and Hasura run on `data`; Redis, akka-apps, graphql-actions and graphql-middleware on
-`control`. Labels set with
+`control`; bbb-web and the front nginx on `storage`, where the `bbb-data` volume
+(`/var/bigbluebutton`) is attached. Labels set with
 `kubectl label` are lost when the managed cluster replaces a node (upgrade, pool change):
 re-apply them, or set them as node pool labels in the cloud provider.
 
@@ -38,7 +40,9 @@ kubectl -n bbb get pods -w
 
 `create-secrets.sh` generates the database passwords (`bbb-db`), the shared secret
 (`bbb-salt`) and the Hasura admin secret (`bbb-hasura`) once and keeps them on later runs; the
-pull Secret (`ghcr-pull`) is refreshed every run. Nothing secret lives in this repository.
+pull Secret (`ghcr-pull`) and the TLS Secret (`bbb-tls`) are refreshed every run. Without
+`TLS_CERT`/`TLS_KEY` the TLS Secret holds the `*.bbb.imdt.dev` wildcard, downloaded from
+`a.bbb.imdt.dev` as bbb-docker-dev does (over plain HTTP, as there). Nothing secret lives in this repository.
 
 Expected order: `postgres-0` and `redis-0` start, the `bbb-bootstrap-<hash>` Job creates the
 roles and databases, and `akka-apps` stays in `Init` (container `wait-bootstrap`) until
@@ -50,6 +54,37 @@ time).
 **Always pass `--reset-values` (or your own `-f values.yaml`) to `helm upgrade`.** A plain
 `helm upgrade` with no values flags reuses the values of the previous release, so a one-off
 `--set` (for example a wrong `bootstrap.schemaSha`) silently stays in place.
+
+## Reaching the client (until the public entry point exists)
+
+Every client and API URL derives from `publicHost` (`bigbluebutton.web.serverURL`), and the
+client always uses `https`/`wss` on port 443 of the page's host. Until the public entry point
+exists, `publicHost` is `bbbk8s-ip-127-0-0-1.bbb.imdt.dev`, which public DNS resolves to
+127.0.0.1, and the front nginx terminates TLS for it. Forward port 443 on the machine with the
+browser:
+
+```bash
+sudo kubectl -n bbb port-forward svc/bbb-nginx 443:443
+# then open https://bbbk8s-ip-127-0-0-1.bbb.imdt.dev/ or a join URL
+```
+
+If something already listens on 443 there (another BigBlueButton), run the port-forward and the
+browser inside a container, which has its own loopback.
+
+## How bbb-web and the front nginx are wired
+
+- **bbb-web** is the package's exploded war started with the `bbb-web.service` command line,
+  listening on 0.0.0.0:8090. `/etc/bigbluebutton/bbb-web.properties` is rendered at start from
+  the `bbb-web-config` ConfigMap plus `securitySalt` from `bbb-salt` (`bbbWeb.properties` in
+  values adds lines). The conversion wrapper `/usr/share/bbb-web/run-in-systemd.sh`, called by
+  that fixed path, is replaced by a plain `timeout` (no systemd in a container). Office
+  documents are not converted (no LibreOffice, spec L5); PDF and images are.
+- **nginx** serves the html5 client and the learning dashboard built from the pinned commit,
+  the default assets of bigbluebutton-config, and the package nginx fragments with their
+  loopback upstreams rewritten to `bbb-web:8090`, `gql-middleware:8378` and `hasura:8085`. The
+  dashboard app is copied into `/var/bigbluebutton/learning-dashboard` by an init container.
+  It has no NetworkPolicy ingress allow yet (nothing in the cluster calls it); port-forward
+  does not go through NetworkPolicy.
 
 ## How the GraphQL stack is wired
 
@@ -117,7 +152,10 @@ Then confirm in the DigitalOcean panel or with `doctl compute volume list` that 
 - akka-apps `/healthz` answers 503 until bbb-web and the GraphQL middleware exist (later
   slices); the probes are TCP only for that reason.
 - One replica per service; restarting akka-apps ends the meetings it holds (spec L1, L2).
-- No client can connect through the middleware until bbb-web exists (next slice).
+- The default presentation is missing: bbb-web downloads `${serverURL}/default.pdf`, and
+  inside its pod the provisional host resolves to 127.0.0.1, so the download fails and meetings
+  start with no slides. Fixed by the public entry point.
+- No audio or video (LiveKit comes later); the audio dialog can be closed.
 - The middleware panics whenever a Redis receive fails (`internal/websrv/rediscli.go`
   dereferences the nil message): an init container holds it until Redis answers at start, but
   a Redis restart still makes it crash and restart until Redis is back (observed: 3 restarts,

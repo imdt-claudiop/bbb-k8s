@@ -1,0 +1,140 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bbb-nginx-config
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+data:
+  # The site of build/packages-template/bbb-html5/bigbluebutton.nginx, with TLS terminated here
+  # as a bbb-install server does. The package fragments live in /usr/share/bigbluebutton/nginx.
+  bigbluebutton.conf: |
+    server {
+      listen 8080;
+      server_name {{ .Values.publicHost }};
+      access_log /dev/stdout;
+      return 301 https://$host$request_uri;
+    }
+    server {
+      listen 8443 ssl;
+      http2 on;
+      server_name {{ .Values.publicHost }};
+      ssl_certificate     /etc/nginx/tls/tls.crt;
+      ssl_certificate_key /etc/nginx/tls/tls.key;
+      ssl_protocols TLSv1.2 TLSv1.3;
+      access_log /dev/stdout;
+      absolute_redirect off;
+
+      # This variable is used instead of $scheme by bigbluebutton nginx include
+      # files, so $scheme can be overridden in reverse-proxy configurations.
+      set $real_scheme $scheme;
+
+      # BigBlueButton assets and static content.
+      location / {
+        root   /var/www/bigbluebutton-default/assets;
+        index  index.html index.htm;
+        expires 1m;
+      }
+
+      include /usr/share/bigbluebutton/nginx/*.nginx;
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bbb-nginx
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "bbb.selector" "bbb-nginx" | nindent 4 }}
+  ports:
+    - name: https
+      port: 443
+      targetPort: 8443
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bbb-nginx
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- include "bbb.selector" "bbb-nginx" | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "bbb.selector" "bbb-nginx" | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.selector" "bbb-nginx" | nindent 8 }}
+    spec:
+      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      securityContext:
+        runAsUser: 998
+        runAsGroup: 998
+        fsGroup: 998
+      initContainers:
+        # The learning dashboard app lives next to the per-meeting data bbb-web writes in
+        # /var/bigbluebutton/learning-dashboard (spec section 4): copy the app of this image there.
+        - name: copy-dashboard
+          image: {{ include "bbb.image" (dict "root" . "name" "nginx" "tag" .Values.nginx.tag) }}
+          command: ["sh", "-c", "mkdir -p /var/bigbluebutton/learning-dashboard && cp -r /opt/learning-dashboard/. /var/bigbluebutton/learning-dashboard/"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/bigbluebutton
+      containers:
+        - name: nginx
+          image: {{ include "bbb.image" (dict "root" . "name" "nginx" "tag" .Values.nginx.tag) }}
+          ports:
+            - name: https
+              containerPort: 8443
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            tcpSocket:
+              port: 8443
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 8443
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.nginx.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/bigbluebutton
+              readOnly: true
+            - name: site
+              mountPath: /etc/nginx/conf.d/bigbluebutton.conf
+              subPath: bigbluebutton.conf
+            - name: tls
+              mountPath: /etc/nginx/tls
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /var/cache/nginx
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: bbb-data
+        - name: site
+          configMap:
+            name: bbb-nginx-config
+        - name: tls
+          secret:
+            secretName: {{ .Values.nginx.tlsSecret }}
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}

@@ -3,6 +3,7 @@
 #
 # Usage: images/build.sh <component>...
 #   components: akka-apps bootstrap hasura hasura-metadata graphql-middleware graphql-actions
+#               bbb-web nginx
 #
 # Env:
 #   BBB_REPO   path to a bigbluebutton monorepo clone (required unless SRC_DIR is set)
@@ -34,6 +35,8 @@ if [ -z "${SRC_DIR:-}" ]; then
   git -C "$BBB_REPO" archive "$BBB_SHA" \
     bbb-common-message akka-bbb-apps bbb-graphql-server bbb-shared-notes-server \
     bbb-graphql-middleware bbb-graphql-actions \
+    bbb-common-web bigbluebutton-web bigbluebutton-html5 bbb-learning-dashboard bigbluebutton-config \
+    build/packages-template \
     bigbluebutton-html5/private/config/settings.yml | tar -x -C "$SRC_DIR"
 fi
 
@@ -71,6 +74,8 @@ for c in "$@"; do
       ;;
     graphql-middleware) set_value graphqlMiddleware tag "$TAG" ;;
     graphql-actions) set_value graphqlActions tag "$TAG" ;;
+    bbb-web) set_value bbbWeb tag "$TAG" ;;
+    nginx) set_value nginx tag "$TAG" ;;
   esac
 done
 if [ "$PUSH" = 1 ]; then echo ">> chart/values.yaml updated (tag $TAG)"; fi

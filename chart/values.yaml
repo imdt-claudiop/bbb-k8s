@@ -85,3 +85,29 @@ graphqlMiddleware:
   resources:
     requests: { cpu: 250m, memory: 256Mi }
     limits: { cpu: 500m, memory: 512Mi }
+
+# --- Front: bbb-web, nginx (html5 client, learning dashboard) -------------------------------
+# Host every URL of the client and the API derives from (bigbluebutton.web.serverURL). Must be
+# covered by the TLS Secret. bbbk8s-ip-127-0-0-1.bbb.imdt.dev resolves to 127.0.0.1 (public DNS
+# of bbb.imdt.dev) and is reached through `kubectl port-forward svc/bbb-nginx 443:443`.
+publicHost: bbbk8s-ip-127-0-0-1.bbb.imdt.dev
+
+bbbData:
+  storageClass: do-block-storage-retain
+  size: 20Gi
+  role: storage       # every pod that mounts /var/bigbluebutton runs here (spec D2)
+
+bbbWeb:
+  tag: "4.1-66b0bb09-s3a"
+  # Extra lines for /etc/bigbluebutton/bbb-web.properties (securitySalt comes from the Secret).
+  properties: {}
+  resources:
+    requests: { cpu: "1", memory: 1536Mi }
+    limits: { cpu: "2", memory: 3Gi }
+
+nginx:
+  tag: "4.1-66b0bb09-s3a"
+  tlsSecret: bbb-tls  # kubernetes.io/tls, created by scripts/create-secrets.sh
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
