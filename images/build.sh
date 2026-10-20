@@ -3,7 +3,7 @@
 #
 # Usage: images/build.sh <component>...
 #   components: akka-apps bootstrap hasura hasura-metadata graphql-middleware graphql-actions
-#               shared-notes bbb-web nginx webrtc-sfu webrtc-recorder recording
+#               shared-notes export-annotations bbb-web nginx webrtc-sfu webrtc-recorder recording
 #
 # Env:
 #   BBB_REPO   path to a bigbluebutton monorepo clone (required unless SRC_DIR is set)
@@ -34,7 +34,7 @@ if [ -z "${SRC_DIR:-}" ]; then
   trap 'rm -rf "$SRC_DIR"' EXIT
   git -C "$BBB_REPO" archive "$BBB_SHA" \
     bbb-common-message akka-bbb-apps bbb-graphql-server bbb-shared-notes-server \
-    bbb-graphql-middleware bbb-graphql-actions \
+    bbb-graphql-middleware bbb-graphql-actions bbb-export-annotations \
     bbb-common-web bigbluebutton-web bigbluebutton-html5 bbb-learning-dashboard bigbluebutton-config \
     build/packages-template bbb-webrtc-sfu.placeholder.sh bbb-webrtc-recorder.placeholder.sh \
     bbb-playback.placeholder.sh record-and-playback \
@@ -97,6 +97,7 @@ for c in "$@"; do
     graphql-middleware) set_value graphqlMiddleware tag "$TAG" ;;
     graphql-actions) set_value graphqlActions tag "$TAG" ;;
     shared-notes) set_value sharedNotes tag "$TAG" ;;
+    export-annotations) set_value exportAnnotations tag "$TAG" ;;
     bbb-web) set_value bbbWeb tag "$TAG" ;;
     nginx) set_value nginx tag "$TAG" ;;
     webrtc-sfu)

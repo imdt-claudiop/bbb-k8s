@@ -1,0 +1,55 @@
+# Recording retention: runs record-and-playback's cleanup.rb, the upstream package default. It only
+# deletes INTERMEDIATE processing files (status .done, recording/process + recording/publish) and the
+# matching Redis keys of published/unpublished meetings older than a day; it never touches the
+# published content dir nor deleted/. cleanup.rb calls a bare Redis.new, so it honors only REDIS_URL -
+# without it the first eligible meeting aborts the run after deleting its intermediates.
+#
+# Published-recording retention (deleting published recordings older than N days) is a USER DECISION
+# and stays OFF: this Job does not delete any published recording.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: recording-cleanup
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.recordingCleanup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            {{- include "bbb.labels" . | nindent 12 }}
+            {{- include "bbb.selector" "recording-cleanup" | nindent 12 }}
+        spec:
+          {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 10 }}
+          imagePullSecrets:
+            - name: {{ .Values.imagePullSecret }}
+          securityContext:
+            runAsUser: 998
+            runAsGroup: 998
+            fsGroup: 998
+          restartPolicy: Never
+          containers:
+            - name: cleanup
+              image: {{ include "bbb.image" (dict "root" . "name" "recording" "tag" .Values.recording.tag) }}
+              args: ["bundle", "exec", "ruby", "cleanup.rb"]
+              env:
+                - name: SHARED_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.secrets.salt }}
+                      key: security-salt
+                - name: REDIS_URL
+                  value: redis://redis:6379
+              volumeMounts:
+                - name: data
+                  mountPath: /var/bigbluebutton
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: bbb-data

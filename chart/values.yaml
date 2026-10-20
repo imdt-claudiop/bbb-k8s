@@ -86,6 +86,18 @@ sharedNotes:
     requests: { cpu: 100m, memory: 192Mi }
     limits: { cpu: 500m, memory: 512Mi }
 
+exportAnnotations:
+  tag: "4.1-66b0bb09-20261020193503"
+  # Runs on the storage role (bbbData.role) to read the presentation files on bbb-data.
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+recordingCleanup:
+  # Daily at 03:00. Runs the upstream cleanup.rb (intermediate processing files only);
+  # published-recording retention stays OFF (a user decision, see recording-cleanup-cronjob.yaml).
+  schedule: "0 3 * * *"
+
 graphqlMiddleware:
   tag: "4.1-66b0bb09-s2a"
   role: control

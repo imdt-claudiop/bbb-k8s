@@ -1,0 +1,100 @@
+{{- define "bbb.exportAnnotationsConf" -}}
+{
+  "log": { "level": "info", "msgName": "PresAnnStatusMsg" },
+  "shared": {
+    "presAnnDropboxDir": "/tmp/pres-ann-dropbox",
+    "cairosvg": "/usr/bin/cairosvg",
+    "ghostscript": "/usr/bin/gs",
+    "pdftocairo": "/usr/bin/pdftocairo",
+    "blankSvg": "/usr/share/bigbluebutton/blank/blank-svg.svg"
+  },
+  "process": {
+    "maxImageWidth": 1440, "maxImageHeight": 1080,
+    "pointsPerInch": 72, "pixelsPerInch": 96,
+    "cairoSVGUnsafeFlag": false, "rasterizeTimeoutSeconds": 60
+  },
+  "notifier": {
+    "pod_id": "DEFAULT_PRESENTATION_POD",
+    "is_downloadable": "false",
+    "msgName": "NewPresFileAvailableMsg"
+  },
+  "bbbWebAPI": "http://bbb-web:8090",
+  "redis": {
+    "host": "redis", "port": 6379, "password": null,
+    "channels": { "queue": "exportJobs", "publish": "to-akka-apps-redis-channel" }
+  },
+  "fonts": {
+    "draw": "/usr/local/share/fonts/Shantell_Sans-Tldrawish.woff2",
+    "sans": "/usr/local/share/fonts/IBMPlexSans-Medium.woff2",
+    "serif": "/usr/local/share/fonts/IBMPlexSerif-Medium.woff2",
+    "mono": "/usr/local/share/fonts/IBMPlexMono-Medium.woff2"
+  }
+}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bbb-export-annotations-config
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+data:
+  settings.json: |
+    {{- include "bbb.exportAnnotationsConf" . | nindent 4 }}
+---
+# bbb-export-annotations: reads an export job from the Redis exportJobs queue, reads the presentation
+# PDF/slides from the bbb-data volume (exportJob.presLocation), renders the annotated PDF and POSTs it
+# back to bbb-web (notifier.js -> bbbWebAPI). Storage node, next to bbb-web and its presentation files
+# (RWO bbb-data, mounted read-only here). No listening port: it is a Redis consumer, so no Service.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bbb-export-annotations
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- include "bbb.selector" "bbb-export-annotations" | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "bbb.selector" "bbb-export-annotations" | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.selector" "bbb-export-annotations" | nindent 8 }}
+      annotations:
+        bbb-k8s/config-sha: {{ include "bbb.exportAnnotationsConf" . | sha256sum | trunc 16 | quote }}
+    spec:
+      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: bbb-export-annotations
+          image: {{ include "bbb.image" (dict "root" . "name" "export-annotations" "tag" .Values.exportAnnotations.tag) }}
+          # No port and no health endpoint: the master process is the container's main process, so a
+          # crash exits the container and the Deployment restarts it (no probe, which would need procps).
+          resources:
+            {{- toYaml .Values.exportAnnotations.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /usr/local/bigbluebutton/bbb-export-annotations/config/settings.json
+              subPath: settings.json
+            - name: data
+              mountPath: /var/bigbluebutton
+              readOnly: true
+            - name: dropbox
+              mountPath: /tmp/pres-ann-dropbox
+      volumes:
+        - name: config
+          configMap:
+            name: bbb-export-annotations-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: bbb-data
+        - name: dropbox
+          emptyDir: {}

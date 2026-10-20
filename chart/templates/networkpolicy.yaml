@@ -83,10 +83,15 @@ spec:
       "ingress" (list (list 5432 (list "bootstrap" "akka-apps" "hasura" "hasura-metadata" "bbb-shared-notes")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "redis"
       "ingress" (list (list 6379 (list "akka-apps" "gql-actions" "gql-middleware" "bbb-web"
-                                       "bbb-webrtc-sfu" "bbb-webrtc-recorder" "recording" "bbb-shared-notes")))) }}
+                                       "bbb-webrtc-sfu" "bbb-webrtc-recorder" "recording" "bbb-shared-notes"
+                                       "bbb-export-annotations" "recording-cleanup")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "bbb-shared-notes"
       "ingress" (list (list 8787 (list "bbb-nginx")))
       "egress" (list (list 5432 (list "postgres")) (list 6379 (list "redis")) (list 8090 (list "bbb-web")))) }}
+{{- include "bbb.netpol" (dict "root" . "name" "bbb-export-annotations"
+      "egress" (list (list 6379 (list "redis")) (list 8090 (list "bbb-web")))) }}
+{{- include "bbb.netpol" (dict "root" . "name" "recording-cleanup"
+      "egress" (list (list 6379 (list "redis")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "bootstrap"
       "egress" (list (list 5432 (list "postgres")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "akka-apps"
@@ -149,6 +154,7 @@ spec:
         {{- include "bbb.peer" "gql-middleware" | nindent 8 }}
         {{- include "bbb.peer" "akka-apps" | nindent 8 }}
         {{- include "bbb.peer" "bbb-shared-notes" | nindent 8 }}
+        {{- include "bbb.peer" "bbb-export-annotations" | nindent 8 }}
       ports:
         - { protocol: TCP, port: 8090 }
   egress:
