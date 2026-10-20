@@ -1,8 +1,9 @@
 # Installing bbb-k8s (phase 1 skeleton)
 
-This installs the first BigBlueButton 4.1 services in dependency order: Postgres and Redis,
-the database bootstrap Job, then akka-apps. Later slices add bbb-web, Hasura, the GraphQL
-middleware and actions, LiveKit and the SFU, recording and the nginx entry point.
+This installs the BigBlueButton 4.1 services built so far, in dependency order: Postgres and
+Redis, the database bootstrap Job, akka-apps, then the GraphQL stack (Hasura with its metadata
+Job, graphql-actions, graphql-middleware). Later slices add bbb-web, nginx and the client, the
+HTTPS entry point, LiveKit and the SFU, and recording.
 
 ## Prerequisites
 
@@ -22,7 +23,8 @@ kubectl label node <node> bbb-k8s/role=control
 kubectl label node <node> bbb-k8s/role=data
 ```
 
-In this slice Postgres runs on `data`, Redis and akka-apps on `control`. Labels set with
+Postgres and Hasura run on `data`; Redis, akka-apps, graphql-actions and graphql-middleware on
+`control`. Labels set with
 `kubectl label` are lost when the managed cluster replaces a node (upgrade, pool change):
 re-apply them, or set them as node pool labels in the cloud provider.
 
@@ -34,17 +36,41 @@ helm upgrade --install bbb chart -n bbb --reset-values
 kubectl -n bbb get pods -w
 ```
 
-`create-secrets.sh` generates the database passwords (`bbb-db`) and the shared secret
-(`bbb-salt`) once and keeps them on later runs; the pull Secret (`ghcr-pull`) is refreshed
-every run. Nothing secret lives in this repository.
+`create-secrets.sh` generates the database passwords (`bbb-db`), the shared secret
+(`bbb-salt`) and the Hasura admin secret (`bbb-hasura`) once and keeps them on later runs; the
+pull Secret (`ghcr-pull`) is refreshed every run. Nothing secret lives in this repository.
 
 Expected order: `postgres-0` and `redis-0` start, the `bbb-bootstrap-<hash>` Job creates the
 roles and databases, and `akka-apps` stays in `Init` (container `wait-bootstrap`) until
-`bbb_graphql` carries the marker of the current schema, then starts.
+`bbb_graphql` carries the marker of the current schema, then starts. `hasura` waits for the
+same marker, the `hasura-metadata-<hash>` Job waits for Hasura and applies the metadata, and
+`gql-actions` / `gql-middleware` start right away (they only need Redis and Hasura at request
+time).
 
 **Always pass `--reset-values` (or your own `-f values.yaml`) to `helm upgrade`.** A plain
 `helm upgrade` with no values flags reuses the values of the previous release, so a one-off
 `--set` (for example a wrong `bootstrap.schemaSha`) silently stays in place.
+
+## How the GraphQL stack is wired
+
+- **Hasura** runs the Community Edition engine the `bbb-graphql-server` package installs (the
+  binary published in `iMDT/hasura-graphql-engine`, checksum-pinned in `images/hasura`); the
+  official `hasura/graphql-engine` image, which ships the Pro Edition binary, only provides the
+  runtime libraries. Tuning comes from the package's `hasura-config.env` (`hasura.env` in values).
+  The auth hook is `akka-apps:8901/userInfo`, the action handler `gql-actions:8093`.
+- **Metadata**: `images/hasura-metadata` carries `bbb-graphql-server/metadata` of the pinned
+  commit, with the BigBlueButton source rewritten at build time to read its URL from
+  `HASURA_GRAPHQL_BBB_DATABASE_URL` (upstream it is a literal with `127.0.0.1` and a password).
+  The Job applies it, reloads, and fails unless Hasura reports the metadata as consistent. Its
+  name is derived from the schema sha, the metadata content sha and the image tag, so a new
+  schema (bootstrap recreates `bbb_graphql`) or new metadata re-runs it.
+- **graphql-middleware** reads `/etc/bigbluebutton/bbb-graphql-middleware.yml` (a ConfigMap)
+  over its packaged defaults: Service names instead of loopback, and Hasura directly on
+  `hasura:8085` instead of the package's nginx load balancer on 8185. Its first hook is
+  bbb-web, which arrives in a later slice: until then every client connection is refused with
+  close code 4403.
+- **graphql-actions** turns client mutations into Redis messages and trusts the session
+  variables in the request, so only Hasura and the middleware may reach it.
 
 ## How the database bootstrap behaves
 
@@ -91,4 +117,6 @@ Then confirm in the DigitalOcean panel or with `doctl compute volume list` that 
 - akka-apps `/healthz` answers 503 until bbb-web and the GraphQL middleware exist (later
   slices); the probes are TCP only for that reason.
 - One replica per service; restarting akka-apps ends the meetings it holds (spec L1, L2).
-- Hasura metadata is not applied yet (Hasura slice).
+- No client can connect through the middleware until bbb-web exists (next slice).
+- Changing the middleware ConfigMap does not restart the middleware: restart it
+  (`kubectl -n bbb rollout restart deploy/gql-middleware`).

@@ -14,7 +14,8 @@ itself go upstream as pull requests; this repository only holds the packaging.
 | `scripts/` | Cluster helpers (`create-secrets.sh`) |
 | `docs/` | Install and operation runbooks |
 
-Current slice: Postgres, Redis, the database bootstrap Job and akka-apps. See
+Current state: Postgres, Redis, the database bootstrap Job, akka-apps and the GraphQL stack
+(Hasura, graphql-actions, graphql-middleware). See
 [docs/install.md](docs/install.md).
 
 ## Building images
