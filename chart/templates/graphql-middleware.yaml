@@ -1,0 +1,88 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gql-middleware-config
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+data:
+  # Override merged over the packaged config.yml (bbb-graphql-middleware/config/Config.go);
+  # the middleware reads no environment variables for these.
+  bbb-graphql-middleware.yml: |
+    server:
+      listen_host: 0.0.0.0
+      listen_port: 8378
+    redis:
+      host: redis
+      port: 6379
+    hasura:
+      url: ws://hasura:8085/v1/graphql
+    graphql-actions:
+      url: http://gql-actions:8093
+    auth_hook:
+      url: http://bbb-web:8090/bigbluebutton/connection/checkGraphqlAuthorization
+    session_vars_hook:
+      url: http://akka-apps:8901/userInfo
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gql-middleware
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "bbb.selector" "gql-middleware" | nindent 4 }}
+  ports:
+    - name: http
+      port: 8378
+---
+# One replica: akka-apps forces reconnections through a single HTTP URL
+# (services.graphqlMiddlewareAPI), spec D9.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gql-middleware
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- include "bbb.selector" "gql-middleware" | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "bbb.selector" "gql-middleware" | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.selector" "gql-middleware" | nindent 8 }}
+    spec:
+      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.graphqlMiddleware.role) | nindent 6 }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      containers:
+        - name: gql-middleware
+          image: {{ include "bbb.image" (dict "root" . "name" "graphql-middleware" "tag" .Values.graphqlMiddleware.tag) }}
+          ports:
+            - name: http
+              containerPort: 8378
+          readinessProbe:
+            tcpSocket:
+              port: 8378
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8378
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.graphqlMiddleware.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/bigbluebutton/bbb-graphql-middleware.yml
+              subPath: bbb-graphql-middleware.yml
+      volumes:
+        - name: config
+          configMap:
+            name: gql-middleware-config

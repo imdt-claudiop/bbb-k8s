@@ -80,27 +80,7 @@ spec:
         runAsGroup: 998
       initContainers:
         # Hold akka until the bootstrap Job wrote the marker of the current schema.
-        - name: wait-bootstrap
-          image: {{ .Values.postgres.image }}
-          env:
-            - name: PGHOST
-              value: postgres
-            - name: PGUSER
-              value: bbb_core
-            - name: PGDATABASE
-              value: postgres
-            - name: EXPECTED
-              value: {{ printf "schema-sha:%s" $schemaSha | quote }}
-            {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "PGPASSWORD" "key" "bbb-core-password") | nindent 12 }}
-          command:
-            - sh
-            - -c
-            - |
-              q="SELECT shobj_description(oid, 'pg_database') FROM pg_database WHERE datname = 'bbb_graphql'"
-              until [ "$(psql -tAc "$q" 2>/dev/null)" = "$EXPECTED" ]; do
-                echo "waiting for bbb_graphql at $EXPECTED"; sleep 3
-              done
-              echo "bbb_graphql is at $EXPECTED"
+        {{- include "bbb.waitBootstrap" (dict "root" . "user" "bbb_core" "key" "bbb-core-password") | nindent 8 }}
       containers:
         - name: akka-apps
           image: {{ include "bbb.image" (dict "root" . "name" "akka-apps" "tag" .Values.akkaApps.tag) }}

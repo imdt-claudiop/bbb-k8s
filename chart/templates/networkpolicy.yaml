@@ -1,10 +1,53 @@
 # Default-deny in the namespace, then named allows (spec D6). Several BBB surfaces have no
 # authentication of their own (graphql-actions, the notes /loopback, akka /analytics), so every
-# flow is listed explicitly. Later slices add their own allows here.
+# flow is listed explicitly. Each workload gets one policy with its ingress and egress.
 {{- define "bbb.peer" -}}
 - podSelector:
     matchLabels:
       {{- include "bbb.selector" . | nindent 6 }}
+{{- end }}
+{{- /* bbb.netpol: dict name, ingress: [[port, [peers]]], egress: [[port, [peers]]] */}}
+{{- define "bbb.netpol" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .name }}
+  labels:
+    {{- include "bbb.labels" .root | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "bbb.selector" .name | nindent 6 }}
+  policyTypes:
+    {{- if .ingress }}
+    - Ingress
+    {{- end }}
+    {{- if .egress }}
+    - Egress
+    {{- end }}
+  {{- with .ingress }}
+  ingress:
+    {{- range . }}
+    - from:
+        {{- range (index . 1) }}
+        {{- include "bbb.peer" . | nindent 8 }}
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: {{ index . 0 }} }
+    {{- end }}
+  {{- end }}
+  {{- with .egress }}
+  egress:
+    {{- range . }}
+    - to:
+        {{- range (index . 1) }}
+        {{- include "bbb.peer" . | nindent 8 }}
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: {{ index . 0 }} }
+    {{- end }}
+  {{- end }}
 {{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -36,76 +79,24 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: postgres
-  labels:
-    {{- include "bbb.labels" . | nindent 4 }}
-spec:
-  podSelector:
-    matchLabels:
-      {{- include "bbb.selector" "postgres" | nindent 6 }}
-  policyTypes: ["Ingress"]
-  ingress:
-    - from:
-        {{- include "bbb.peer" "bootstrap" | nindent 8 }}
-        {{- include "bbb.peer" "akka-apps" | nindent 8 }}
-      ports:
-        - { protocol: TCP, port: 5432 }
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: redis
-  labels:
-    {{- include "bbb.labels" . | nindent 4 }}
-spec:
-  podSelector:
-    matchLabels:
-      {{- include "bbb.selector" "redis" | nindent 6 }}
-  policyTypes: ["Ingress"]
-  ingress:
-    - from:
-        {{- include "bbb.peer" "akka-apps" | nindent 8 }}
-      ports:
-        - { protocol: TCP, port: 6379 }
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: bootstrap
-  labels:
-    {{- include "bbb.labels" . | nindent 4 }}
-spec:
-  podSelector:
-    matchLabels:
-      {{- include "bbb.selector" "bootstrap" | nindent 6 }}
-  policyTypes: ["Egress"]
-  egress:
-    - to:
-        {{- include "bbb.peer" "postgres" | nindent 8 }}
-      ports:
-        - { protocol: TCP, port: 5432 }
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: akka-apps
-  labels:
-    {{- include "bbb.labels" . | nindent 4 }}
-spec:
-  podSelector:
-    matchLabels:
-      {{- include "bbb.selector" "akka-apps" | nindent 6 }}
-  policyTypes: ["Egress"]
-  egress:
-    - to:
-        {{- include "bbb.peer" "postgres" | nindent 8 }}
-      ports:
-        - { protocol: TCP, port: 5432 }
-    - to:
-        {{- include "bbb.peer" "redis" | nindent 8 }}
-      ports:
-        - { protocol: TCP, port: 6379 }
+{{- include "bbb.netpol" (dict "root" . "name" "postgres"
+      "ingress" (list (list 5432 (list "bootstrap" "akka-apps" "hasura" "hasura-metadata")))) }}
+{{- include "bbb.netpol" (dict "root" . "name" "redis"
+      "ingress" (list (list 6379 (list "akka-apps" "gql-actions" "gql-middleware")))) }}
+{{- include "bbb.netpol" (dict "root" . "name" "bootstrap"
+      "egress" (list (list 5432 (list "postgres")))) }}
+{{- include "bbb.netpol" (dict "root" . "name" "akka-apps"
+      "ingress" (list (list 8901 (list "hasura" "gql-middleware")))
+      "egress" (list (list 5432 (list "postgres")) (list 6379 (list "redis")) (list 8378 (list "gql-middleware")))) }}
+{{- include "bbb.netpol" (dict "root" . "name" "hasura"
+      "ingress" (list (list 8085 (list "gql-middleware" "hasura-metadata")))
+      "egress" (list (list 5432 (list "postgres")) (list 8901 (list "akka-apps")) (list 8093 (list "gql-actions")))) }}
+{{- include "bbb.netpol" (dict "root" . "name" "hasura-metadata"
+      "egress" (list (list 5432 (list "postgres")) (list 8085 (list "hasura")))) }}
+{{- include "bbb.netpol" (dict "root" . "name" "gql-actions"
+      "ingress" (list (list 8093 (list "hasura" "gql-middleware")))
+      "egress" (list (list 6379 (list "redis")))) }}
+{{- include "bbb.netpol" (dict "root" . "name" "gql-middleware"
+      "ingress" (list (list 8378 (list "akka-apps")))
+      "egress" (list (list 6379 (list "redis")) (list 8085 (list "hasura")) (list 8093 (list "gql-actions"))
+                     (list 8901 (list "akka-apps")) (list 8090 (list "bbb-web")))) }}

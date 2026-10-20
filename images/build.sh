@@ -1,7 +1,8 @@
 #!/bin/bash
 # Build and push the bbb-k8s images, then pin them in chart/values.yaml.
 #
-# Usage: images/build.sh <component>...      components: akka-apps bootstrap
+# Usage: images/build.sh <component>...
+#   components: akka-apps bootstrap hasura hasura-metadata graphql-middleware graphql-actions
 #
 # Env:
 #   BBB_REPO   path to a bigbluebutton monorepo clone (required unless SRC_DIR is set)
@@ -24,7 +25,7 @@ LINE=$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$ROOT/chart/Cha
 BBB_SHA=${BBB_SHA:-$(sed -n 's/^  sourceSha: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$VALUES" | head -1)}
 TAG=${TAG:-$LINE-${BBB_SHA:0:8}-$(date -u +%Y%m%d%H%M%S)}
 
-[ $# -gt 0 ] || { echo "usage: $0 <akka-apps|bootstrap>..." >&2; exit 2; }
+[ $# -gt 0 ] || { echo "usage: $0 <component>... (see the header)" >&2; exit 2; }
 
 if [ -z "${SRC_DIR:-}" ]; then
   : "${BBB_REPO:?set BBB_REPO to a bigbluebutton clone, or SRC_DIR}"
@@ -32,6 +33,7 @@ if [ -z "${SRC_DIR:-}" ]; then
   trap 'rm -rf "$SRC_DIR"' EXIT
   git -C "$BBB_REPO" archive "$BBB_SHA" \
     bbb-common-message akka-bbb-apps bbb-graphql-server bbb-shared-notes-server \
+    bbb-graphql-middleware bbb-graphql-actions \
     bigbluebutton-html5/private/config/settings.yml | tar -x -C "$SRC_DIR"
 fi
 
@@ -60,6 +62,15 @@ for c in "$@"; do
       set_value bootstrap tag "$TAG"
       set_value bootstrap schemaSha "$(sha256sum "$SRC_DIR/bbb-graphql-server/bbb_schema.sql" | cut -d' ' -f1)"
       ;;
+    hasura) set_value hasura tag "$TAG" ;;
+    hasura-metadata)
+      set_value hasuraMetadata tag "$TAG"
+      # Content hash of what the image applies: a change re-runs the metadata Job.
+      set_value hasuraMetadata metadataSha "$(cd "$SRC_DIR/bbb-graphql-server" \
+        && find metadata config.yaml -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
+      ;;
+    graphql-middleware) set_value graphqlMiddleware tag "$TAG" ;;
+    graphql-actions) set_value graphqlActions tag "$TAG" ;;
   esac
 done
 if [ "$PUSH" = 1 ]; then echo ">> chart/values.yaml updated (tag $TAG)"; fi

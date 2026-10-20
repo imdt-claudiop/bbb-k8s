@@ -1,0 +1,42 @@
+{{- if not .Values.hasuraMetadata.metadataSha }}{{ fail "hasuraMetadata.metadataSha is empty: run images/build.sh hasura-metadata" }}{{ end }}
+# Applies the BigBlueButton metadata once Hasura is up. Plain resource keyed on the schema, the
+# metadata content and the image tag: a recreated bbb_graphql or new metadata re-runs it, an
+# unchanged release does not.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hasura-metadata-{{ printf "%s%s%s" .Values.bootstrap.schemaSha .Values.hasuraMetadata.metadataSha .Values.hasuraMetadata.tag | sha256sum | trunc 8 }}
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- include "bbb.selector" "hasura-metadata" | nindent 4 }}
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.selector" "hasura-metadata" | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      initContainers:
+        # Never check consistency while the bootstrap is recreating bbb_graphql.
+        {{- include "bbb.waitBootstrap" (dict "root" . "user" "bbb_hasura" "key" "bbb-hasura-password") | nindent 8 }}
+        # Hasura answers /healthz only after its init container saw the current schema marker.
+        - name: wait-hasura
+          image: {{ include "bbb.image" (dict "root" . "name" "hasura-metadata" "tag" .Values.hasuraMetadata.tag) }}
+          command: ["sh", "-c", "until curl -fsS -o /dev/null http://hasura:8085/healthz; do echo waiting for hasura; sleep 3; done"]
+      containers:
+        - name: apply
+          image: {{ include "bbb.image" (dict "root" . "name" "hasura-metadata" "tag" .Values.hasuraMetadata.tag) }}
+          env:
+            - name: HASURA_GRAPHQL_ENABLE_TELEMETRY
+              value: "false"
+            - name: HASURA_ENDPOINT
+              value: http://hasura:8085
+            - name: HASURA_GRAPHQL_ADMIN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.hasura }}
+                  key: admin-secret

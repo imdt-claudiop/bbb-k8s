@@ -1,0 +1,86 @@
+{{- $schemaSha := required "bootstrap.schemaSha is empty: run images/build.sh bootstrap" .Values.bootstrap.schemaSha }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: hasura
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "bbb.selector" "hasura" | nindent 4 }}
+  ports:
+    - name: http
+      port: 8085
+---
+# bbb-graphql-server: one Hasura instance (the package's bbb-graphql-server@8085). The Service
+# replaces the nginx load balancer on 127.0.0.1:8185 that the middleware points to.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hasura
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- include "bbb.selector" "hasura" | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "bbb.selector" "hasura" | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.selector" "hasura" | nindent 8 }}
+      annotations:
+        # A new schema recreates bbb_graphql: restart Hasura after it, like akka-apps.
+        bbb-k8s/schema-sha: {{ $schemaSha | quote }}
+    spec:
+      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.hasura.role) | nindent 6 }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      initContainers:
+        {{- include "bbb.waitBootstrap" (dict "root" . "user" "bbb_hasura" "key" "bbb-hasura-password") | nindent 8 }}
+      containers:
+        - name: hasura
+          image: {{ include "bbb.image" (dict "root" . "name" "hasura" "tag" .Values.hasura.tag) }}
+          env:
+            {{- range $k, $v := .Values.hasura.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            - name: HASURA_GRAPHQL_SERVER_PORT
+              value: "8085"
+            - name: HASURA_GRAPHQL_AUTH_HOOK
+              value: http://akka-apps:8901/userInfo
+            - name: HASURA_BBB_GRAPHQL_ACTIONS_ADAPTER_URL
+              value: http://gql-actions:8093
+            - name: HASURA_GRAPHQL_ADMIN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.hasura }}
+                  key: admin-secret
+            {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "HASURA_APP_PASSWORD" "key" "hasura-app-password") | nindent 12 }}
+            {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "BBB_HASURA_PASSWORD" "key" "bbb-hasura-password") | nindent 12 }}
+            # The passwords are hex (scripts/create-secrets.sh), safe inside a URL.
+            - name: HASURA_GRAPHQL_DATABASE_URL
+              value: postgres://hasura_app:$(HASURA_APP_PASSWORD)@postgres:5432/hasura_app
+            # Read by the BigBlueButton source of the metadata (images/hasura-metadata).
+            - name: HASURA_GRAPHQL_BBB_DATABASE_URL
+              value: postgres://bbb_hasura:$(BBB_HASURA_PASSWORD)@postgres:5432/bbb_graphql
+          ports:
+            - name: http
+              containerPort: 8085
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8085
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 8085
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.hasura.resources | nindent 12 }}

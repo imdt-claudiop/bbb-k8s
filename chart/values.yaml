@@ -10,6 +10,7 @@ secrets:
   db: bbb-db          # keys: postgres-password, bbb-core-password, bbb-hasura-password,
                       #       hasura-app-password, blocknote-app-password
   salt: bbb-salt      # key: security-salt
+  hasura: bbb-hasura  # key: admin-secret
 
 # Node roles (spec D1). Label the nodes with  bbb-k8s/role=<role>.
 nodeRoleLabel: bbb-k8s/role
@@ -47,3 +48,40 @@ akkaApps:
   # Endpoints of services that later slices deploy; akka boots without them.
   bbbWebAPI: "http://bbb-web:8090/bigbluebutton/api"
   graphqlMiddlewareAPI: "http://gql-middleware:8378"
+
+# --- GraphQL stack (bbb-graphql-server, -actions, -middleware) ------------------------------
+hasura:
+  tag: "4.1-66b0bb09-s2a"
+  role: data          # next to Postgres: the hottest query path (spec D1)
+  # hasura-config.env of the bbb-graphql-server package.
+  env:
+    HASURA_GRAPHQL_LOG_LEVEL: warn
+    HASURA_GRAPHQL_ENABLE_CONSOLE: "false"
+    HASURA_GRAPHQL_LIVE_QUERIES_MULTIPLEXED_REFETCH_INTERVAL: "333"
+    HASURA_GRAPHQL_LIVE_QUERIES_MULTIPLEXED_BATCH_SIZE: "1000"
+    HASURA_GRAPHQL_STREAMING_QUERIES_MULTIPLEXED_REFETCH_INTERVAL: "150"
+    HASURA_GRAPHQL_STREAMING_QUERIES_MULTIPLEXED_BATCH_SIZE: "1000"
+    HASURA_GRAPHQL_ENABLE_TELEMETRY: "false"
+    HASURA_GRAPHQL_WEBSOCKET_KEEPALIVE: "10"
+  resources:
+    requests: { cpu: 500m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+hasuraMetadata:
+  # Both written by images/build.sh; metadataSha is the content hash of the applied metadata.
+  tag: "4.1-66b0bb09-s2a"
+  metadataSha: "b862cd128c401d33ca9e62b7c3a4c8684639f257ae50c472403ce01cf8c70d69"
+
+graphqlActions:
+  tag: "4.1-66b0bb09-s2a"
+  role: control
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+graphqlMiddleware:
+  tag: "4.1-66b0bb09-s2a"
+  role: control
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
