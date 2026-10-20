@@ -46,8 +46,7 @@ akkaApps:
   resources:
     requests: { cpu: 500m, memory: 768Mi }
     limits: { cpu: "1", memory: 1280Mi }
-  # Endpoints of services that later slices deploy; akka boots without them.
-  bbbWebAPI: "http://bbb-web:8090/bigbluebutton/api"
+  # bbbWebAPI (base of the breakout join URL) is templated from publicHost in akka-apps.yaml.
   graphqlMiddlewareAPI: "http://gql-middleware:8378"
 
 # --- GraphQL stack (bbb-graphql-server, -actions, -middleware) ------------------------------

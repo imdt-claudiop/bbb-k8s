@@ -1,4 +1,17 @@
 {{- $schemaSha := required "bootstrap.schemaSha is empty: run images/build.sh bootstrap" .Values.bootstrap.schemaSha }}
+{{- define "bbb.akkaConf" -}}
+include file("/usr/share/bbb-apps-akka/conf/application.conf")
+
+redis.host = "redis"
+postgres.properties.serverName = "postgres"
+postgres.properties.password = ${BBB_CORE_PASSWORD}
+# Base of the breakout-room join URL akka hands to the CLIENT (BreakoutHdlrHelpers): it must be
+# the public host, not an internal Service address, or the browser opens an unreachable URL.
+services.bbbWebAPI = "https://{{ include "bbb.publicHost" . }}/bigbluebutton/api"
+services.sharedSecret = ${SHARED_SECRET}
+services.graphqlMiddlewareAPI = {{ .Values.akkaApps.graphqlMiddlewareAPI | quote }}
+http.interface = "0.0.0.0"
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -9,15 +22,7 @@ data:
   # Same shape the package preinst writes: include the packaged defaults, override what differs.
   # Only http.* accepts env vars upstream; the rest is HOCON, with secrets resolved from env.
   bbb-apps-akka.conf: |
-    include file("/usr/share/bbb-apps-akka/conf/application.conf")
-
-    redis.host = "redis"
-    postgres.properties.serverName = "postgres"
-    postgres.properties.password = ${BBB_CORE_PASSWORD}
-    services.bbbWebAPI = {{ .Values.akkaApps.bbbWebAPI | quote }}
-    services.sharedSecret = ${SHARED_SECRET}
-    services.graphqlMiddlewareAPI = {{ .Values.akkaApps.graphqlMiddlewareAPI | quote }}
-    http.interface = "0.0.0.0"
+    {{- include "bbb.akkaConf" . | nindent 4 }}
 ---
 # akka-apps is the reader of the client settings (ClientSettings.scala); bbb-web mounts it later too.
 apiVersion: v1
@@ -71,6 +76,9 @@ spec:
         # Schema sha only (not the bootstrap image tag): a new schema recreates akka in the
         # same upgrade, a bootstrap image bump does not.
         bbb-k8s/schema-sha: {{ $schemaSha | quote }}
+        # Roll akka when its config changes (e.g. publicHost): akka reads HOCON once at JVM start and
+        # the subPath-mounted file never live-updates, so without this a config change stays inert.
+        bbb-k8s/config-sha: {{ include "bbb.akkaConf" . | sha256sum | trunc 16 | quote }}
     spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.akkaApps.role) | nindent 6 }}
       imagePullSecrets:
