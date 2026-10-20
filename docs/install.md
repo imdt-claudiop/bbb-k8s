@@ -3,8 +3,8 @@
 This installs the BigBlueButton 4.1 services built so far, in dependency order: Postgres and
 Redis, the database bootstrap Job, akka-apps, then the GraphQL stack (Hasura with its metadata
 Job, graphql-actions, graphql-middleware), then bbb-web and the front nginx with the html5
-client and the learning dashboard. Later slices add the public HTTPS entry point, LiveKit and
-the SFU, and recording.
+client and the learning dashboard, the public HTTPS entry point, and the media path: LiveKit,
+bbb-webrtc-sfu (LiveKit module only) and bbb-webrtc-recorder. Recording processing comes next.
 
 ## Prerequisites
 
@@ -25,8 +25,9 @@ kubectl label node <node> bbb-k8s/role=data
 ```
 
 Postgres and Hasura run on `data`; Redis, akka-apps, graphql-actions and graphql-middleware on
-`control`; bbb-web and the front nginx on `storage`, where the `bbb-data` volume
-(`/var/bigbluebutton`) is attached. Labels set with
+`control`; bbb-web, the front nginx and bbb-webrtc-recorder on `storage`, where the `bbb-data`
+and `bbb-recorder` volumes are attached; livekit-server (host network) and bbb-webrtc-sfu on
+`media`. Labels set with
 `kubectl label` are lost when the managed cluster replaces a node (upgrade, pool change):
 re-apply them, or set them as node pool labels in the cloud provider.
 
@@ -104,6 +105,50 @@ client always uses `https`/`wss` on port 443 of the page's host.
   dashboard app is copied into `/var/bigbluebutton/learning-dashboard` by an init container.
   Its ingress is the public entry point below.
 
+## Media: LiveKit
+
+- **livekit-server** runs the upstream image of the version the `bbb-livekit` package builds
+  (v1.9.12), with host networking on the `media` node so WebRTC reaches the node's public IP
+  directly. Its config is the package's `livekit.yaml` (`chart/files/livekit.yaml`) merged with
+  the cluster wiring (Redis, the SFU webhook, `rtc.node_ip`, the key file) and
+  `livekit.config` from values. `livekit.nodeIP` (per cluster) must be the media node's public
+  IP; a replaced node gets a new IP. The key id is `livekit.apiKey`; the secret is in
+  `bbb-livekit` (`scripts/create-secrets.sh`), mounted as a key file with mode 0440.
+- **bbb-webrtc-sfu** runs only its LiveKit module (`SFU_MODULES`): it answers the token
+  requests of akka-apps, turns LiveKit webhooks into voice/camera/screen events and drives the
+  recorder. Without the mediasoup modules it logs "Reconnecting to MCS" every 2 seconds (spec
+  L11); that is expected.
+- **bbb-webrtc-recorder** is deployed and connected (Redis, LiveKit); recording is exercised
+  with the recording processing.
+- Images: the SFU and the recorder are built from their upstream repositories at the tags the
+  monorepo placeholders pin, with their own Dockerfiles (`images/webrtc-*/upstream`).
+
+### What the DOKS firewall lets through
+
+Measured from outside with a listener on the media node: the DigitalOcean firewall of the
+workers admits only TCP 80 and 443 that nobody asked for; every other TCP port and all
+unsolicited UDP is dropped. WebRTC still works over UDP for most clients, because ICE opens the
+path from both sides and the firewall is stateful (two browsers on the internet connected over
+UDP to the media node, ports in 16384-32768). For clients whose UDP cannot get through (a
+network that blocks UDP, some NATs), LiveKit also accepts media over **TCP on port 443** of the
+media node (`livekit.config.rtc.tcp_port`, `allow_tcp_fallback`), which is open: a browser with
+all UDP blocked joined audio that way.
+
+To make UDP reachable without relying on ICE from both sides (better for strict NATs and the
+recommended production setup), someone with access to the DigitalOcean account should add an
+inbound rule for **UDP 16384-32768** (and **TCP 7881** if LiveKit's default TCP port is ever
+used) to the firewall that covers the worker droplets, or to a new firewall applied to the node
+pool's tag.
+
+### NetworkPolicy and the host network
+
+livekit-server carries the node identity, so plain NetworkPolicies cannot select it: the chart
+adds CiliumNetworkPolicies naming the node entities on LiveKit's ports (nginx, the SFU and the
+recorder to 7880; LiveKit to Redis and to the SFU webhook; the recorder to the media ports).
+Policies do not protect a host-network pod itself: any pod in the cluster can open LiveKit's
+port 7880 (its API still needs a token signed with the secret). From the internet 7880 is
+filtered.
+
 ## How the GraphQL stack is wired
 
 - **Hasura** runs the Community Edition engine the `bbb-graphql-server` package installs (the
@@ -170,7 +215,7 @@ Then confirm in the DigitalOcean panel or with `doctl compute volume list` that 
 - akka-apps `/healthz` answers 503 until bbb-web and the GraphQL middleware exist (later
   slices); the probes are TCP only for that reason.
 - One replica per service; restarting akka-apps ends the meetings it holds (spec L1, L2).
-- No audio or video (LiveKit comes later); the audio dialog can be closed.
+- Camera and screen sharing use the same LiveKit path but are not part of the validated set.
 - The middleware panics whenever a Redis receive fails (`internal/websrv/rediscli.go`
   dereferences the nil message): an init container holds it until Redis answers at start, but
   a Redis restart still makes it crash and restart until Redis is back (observed: 3 restarts,

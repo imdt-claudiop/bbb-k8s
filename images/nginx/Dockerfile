@@ -27,7 +27,7 @@ RUN cd /src/bbb-learning-dashboard && npm ci && npm run build
 FROM ${BUILDER_IMAGE} AS fragments
 # The package nginx fragments of the pinned commit, with the loopback upstreams of a single-host
 # install replaced by the Service names of this chart (the 8185 Hasura load balancer of
-# bbb-graphql-middleware becomes the hasura Service).
+# bbb-graphql-middleware becomes the hasura Service; LiveKit and the SFU are their Services).
 COPY --from=src bigbluebutton-web/bbb-web.nginx /f/web.nginx
 COPY --from=src bigbluebutton-web/nginx-confs/presentation-slides.nginx /f/presentation-slides.nginx
 COPY --from=src build/packages-template/bbb-html5/bbb-html5.nginx /f/bbb-html5.nginx
@@ -36,9 +36,13 @@ COPY --from=src build/packages-template/bbb-graphql-middleware/graphql.nginx /f/
 COPY --from=src build/packages-template/bbb-graphql-middleware/bbb-graphql-client-settings-cache.conf /f/conf.d/bbb-graphql-client-settings-cache.conf
 COPY --from=src bbb-learning-dashboard/learning-dashboard.nginx /f/learning-dashboard.nginx
 COPY --from=src build/packages-template/bbb-config/plugins-assets-cors.nginx /f/plugins-assets-cors.nginx
+COPY --from=src build/packages-template/bbb-livekit/livekit.nginx /f/livekit.nginx
+COPY --from=src build/packages-template/bbb-webrtc-sfu/webrtc-sfu.nginx /f/webrtc-sfu.nginx
 RUN sed -i -e 's|http://127.0.0.1:8090|http://bbb-web:8090|g' \
            -e 's|http://127.0.0.1:8378|http://gql-middleware:8378|g' \
-           -e 's|http://127.0.0.1:8185|http://hasura:8085|g' /f/*.nginx \
+           -e 's|http://127.0.0.1:8185|http://hasura:8085|g' \
+           -e 's|http://127.0.0.1:7880|http://livekit:7880|g' \
+           -e 's|http://127.0.0.1:3008|http://bbb-webrtc-sfu:3008|g' /f/*.nginx \
     && ! grep -n '^[^#]*127\.0\.0\.1' /f/*.nginx
 
 FROM nginxinc/nginx-unprivileged:1.29

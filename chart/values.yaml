@@ -11,6 +11,7 @@ secrets:
                       #       hasura-app-password, blocknote-app-password
   salt: bbb-salt      # key: security-salt
   hasura: bbb-hasura  # key: admin-secret
+  livekit: bbb-livekit  # keys: api-secret, keys.yaml (<apiKey>: <secret>)
 
 # Node roles (spec D1). Label the nodes with  bbb-k8s/role=<role>.
 nodeRoleLabel: bbb-k8s/role
@@ -107,7 +108,7 @@ bbbWeb:
     limits: { cpu: "2", memory: 3Gi }
 
 nginx:
-  tag: "4.1-66b0bb09-s3a"
+  tag: "4.1-66b0bb09-s5a"
   tlsSecret: bbb-tls  # kubernetes.io/tls, created by scripts/create-secrets.sh
   # Public entry point: a DigitalOcean LoadBalancer in TCP mode in front of this nginx, which
   # terminates TLS itself (docs/install.md, "Public entry point").
@@ -123,3 +124,38 @@ nginx:
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: "1", memory: 512Mi }
+
+# --- Media: LiveKit, bbb-webrtc-sfu (LiveKit module only), bbb-webrtc-recorder ----------------
+livekit:
+  image: "livekit/livekit-server:v1.9.12"   # the version the bbb-livekit package builds
+  role: media
+  # Public IP of the media node, announced in ICE candidates (spec D4). Set per cluster.
+  nodeIP: ""
+  # Key id (not a secret: it travels in every token header); the secret is in bbb-livekit.
+  apiKey: bbbk8s
+  # Overrides merged over the package's livekit.yaml (chart/files/livekit.yaml).
+  config:
+    rtc:
+      # The DOKS worker firewall drops all inbound UDP and only admits TCP 80/443 (measured,
+      # docs/install.md "Media"): WebRTC media goes over ICE-TCP on 443 of the media node. The
+      # UDP range of the package stays configured and takes over once the firewall opens it.
+      tcp_port: 443
+      allow_tcp_fallback: true
+  resources:
+    requests: { cpu: "1", memory: 512Mi }
+    limits: { cpu: "2", memory: 2Gi }
+
+webrtcSfu:
+  tag: "4.1-66b0bb09-s5a"
+  role: media
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+webrtcRecorder:
+  tag: "4.1-66b0bb09-s5a"
+  storageClass: do-block-storage-retain
+  size: 20Gi
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }

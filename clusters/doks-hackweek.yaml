@@ -2,3 +2,7 @@
 # after the LoadBalancer of svc/bbb-nginx got its IP. A reinstall that recreates the
 # LoadBalancer gets a new IP: run the script again and update this line.
 publicHost: bbbk8s-ip-146-190-198-184.bbb.imdt.dev
+livekit:
+  # ExternalIP of the node labelled bbb-k8s/role=media (temp-hackweek-3b3nqq). A replaced node
+  # gets a new IP: update it.
+  nodeIP: 142.93.115.37

@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: bbb-webrtc-sfu
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "bbb.selector" "bbb-webrtc-sfu" | nindent 4 }}
+  ports:
+    - name: livekit-webhook
+      port: 3040
+    - name: ws
+      port: 3008
+---
+# bbb-webrtc-sfu with only its LiveKit module: tokens, LiveKit events -> akka (Redis) and the
+# recorder orchestration. mediasoup and FreeSWITCH are out of scope (spec 1.3, 1.4).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bbb-webrtc-sfu
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- include "bbb.selector" "bbb-webrtc-sfu" | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "bbb.selector" "bbb-webrtc-sfu" | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.selector" "bbb-webrtc-sfu" | nindent 8 }}
+    spec:
+      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.webrtcSfu.role) | nindent 6 }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      initContainers:
+        # Spec order: livekit-server before the SFU, whose LiveKit controller syncs rooms at start.
+        - name: wait-livekit
+          image: {{ include "bbb.image" (dict "root" . "name" "webrtc-sfu" "tag" .Values.webrtcSfu.tag) }}
+          command: ["node", "-e", "(async()=>{for(;;){try{await fetch('http://livekit:7880/');return}catch(e){console.log('waiting for livekit');await new Promise(r=>setTimeout(r,2000))}}})()"]
+      containers:
+        - name: bbb-webrtc-sfu
+          image: {{ include "bbb.image" (dict "root" . "name" "webrtc-sfu" "tag" .Values.webrtcSfu.tag) }}
+          env:
+            # Only the LiveKit module (config/default.example.yml lists core, screenshare, video,
+            # fullaudio and livekit).
+            - name: SFU_MODULES
+              value: '[{"path":"./lib/livekit/livekit-process.js","name":"livekit","dedicated":true,"ipc":{"mode":"native"}}]'
+            - name: LIVEKIT_ENABLED
+              value: "true"
+            - name: LIVEKIT_HOST
+              value: http://livekit:7880
+            - name: LIVEKIT_BBB_DOMAIN
+              value: {{ include "bbb.publicHost" . | quote }}
+            - name: LIVEKIT_KEY
+              value: {{ .Values.livekit.apiKey | quote }}
+            - name: LIVEKIT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.livekit }}
+                  key: api-secret
+            # The code default is egress (livekit-controller.js); the package uses the recorder.
+            - name: LIVEKIT_RECORDING_ADAPTER
+              value: bbb-webrtc-recorder
+            - name: REDIS_HOST
+              value: redis
+            - name: CLIENT_HOST
+              value: "0.0.0.0"
+            - name: LOG_FILE_ENABLED
+              value: "false"
+            - name: LOG_STDOUT_ENABLED
+              value: "true"
+          ports:
+            - name: livekit-webhook
+              containerPort: 3040
+            - name: ws
+              containerPort: 3008
+          # No health endpoint (spec D10).
+          readinessProbe:
+            tcpSocket:
+              port: 3040
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 3040
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.webrtcSfu.resources | nindent 12 }}

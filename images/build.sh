@@ -3,7 +3,7 @@
 #
 # Usage: images/build.sh <component>...
 #   components: akka-apps bootstrap hasura hasura-metadata graphql-middleware graphql-actions
-#               bbb-web nginx
+#               bbb-web nginx webrtc-sfu webrtc-recorder
 #
 # Env:
 #   BBB_REPO   path to a bigbluebutton monorepo clone (required unless SRC_DIR is set)
@@ -36,7 +36,7 @@ if [ -z "${SRC_DIR:-}" ]; then
     bbb-common-message akka-bbb-apps bbb-graphql-server bbb-shared-notes-server \
     bbb-graphql-middleware bbb-graphql-actions \
     bbb-common-web bigbluebutton-web bigbluebutton-html5 bbb-learning-dashboard bigbluebutton-config \
-    build/packages-template \
+    build/packages-template bbb-webrtc-sfu.placeholder.sh bbb-webrtc-recorder.placeholder.sh \
     bigbluebutton-html5/private/config/settings.yml | tar -x -C "$SRC_DIR"
 fi
 
@@ -51,8 +51,22 @@ set_value() {
 for c in "$@"; do
   img="$REGISTRY/$c:$TAG"
   echo ">> building $img from $BBB_SHA"
-  docker build --build-context src="$SRC_DIR" --build-arg SOURCE_SHA="$BBB_SHA" \
-    -t "$img" "$ROOT/images/$c"
+  if [ -f "$ROOT/images/$c/upstream" ]; then
+    # External component: clone the tag pinned by the monorepo placeholder and build it with its
+    # own Dockerfile.
+    repo=$(sed -n 's/^repo=//p' "$ROOT/images/$c/upstream")
+    placeholder=$(sed -n 's/^placeholder=//p' "$ROOT/images/$c/upstream")
+    tag=$(grep -o -- '--branch [^ ]*' "$SRC_DIR/$placeholder" | cut -d' ' -f2)
+    ext=$(mktemp -d)
+    git clone -q --depth 1 --branch "$tag" "$repo" "$ext/src"
+    docker build --label org.opencontainers.image.source=https://github.com/imdt-claudiop/bbb-k8s \
+      --label "org.bigbluebutton.upstream=$repo@$tag" --label "org.bigbluebutton.source-sha=$BBB_SHA" \
+      -t "$img" "$ext/src"
+    rm -rf "$ext"
+  else
+    docker build --build-context src="$SRC_DIR" --build-arg SOURCE_SHA="$BBB_SHA" \
+      -t "$img" "$ROOT/images/$c"
+  fi
   [ "$PUSH" = 1 ] || continue
   docker push "$img"
   case $c in
@@ -76,6 +90,12 @@ for c in "$@"; do
     graphql-actions) set_value graphqlActions tag "$TAG" ;;
     bbb-web) set_value bbbWeb tag "$TAG" ;;
     nginx) set_value nginx tag "$TAG" ;;
+    webrtc-sfu)
+      set_value webrtcSfu tag "$TAG"
+      # livekit-server runs the upstream image; its config is the bbb-livekit package's.
+      cp "$SRC_DIR/build/packages-template/bbb-livekit/livekit.yaml" "$ROOT/chart/files/livekit.yaml"
+      ;;
+    webrtc-recorder) set_value webrtcRecorder tag "$TAG" ;;
   esac
 done
 if [ "$PUSH" = 1 ]; then echo ">> chart/values.yaml updated (tag $TAG)"; fi

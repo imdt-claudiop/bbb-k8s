@@ -1,0 +1,101 @@
+{{- $nodeIP := required "livekit.nodeIP is empty: set the media node's public IP per cluster" .Values.livekit.nodeIP }}
+{{- /* The bbb-livekit package config merged with the cluster wiring and the overrides. */}}
+{{- $config := .Files.Get "files/livekit.yaml" | fromYaml }}
+{{- $wiring := dict
+      "redis" (dict "address" "redis:6379")
+      "webhook" (dict "api_key" .Values.livekit.apiKey "urls" (list "http://bbb-webrtc-sfu:3040/livekit-webhook"))
+      "rtc" (dict "node_ip" $nodeIP)
+      "key_file" "/etc/livekit/keys/keys.yaml" }}
+{{- $config = mergeOverwrite $config $wiring (deepCopy .Values.livekit.config) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: livekit-config
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+data:
+  livekit.yaml: |
+    {{- toYaml $config | nindent 4 }}
+---
+# Signaling (7880) for nginx /livekit/, the SFU and the recorder. The endpoints are the media
+# node's own address (hostNetwork), see the CiliumNetworkPolicies.
+apiVersion: v1
+kind: Service
+metadata:
+  name: livekit
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "bbb.selector" "livekit" | nindent 4 }}
+  ports:
+    - name: http
+      port: 7880
+---
+# hostNetwork on the media node: WebRTC goes straight to the node's public IP (spec D4).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: livekit
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- include "bbb.selector" "livekit" | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "bbb.selector" "livekit" | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.selector" "livekit" | nindent 8 }}
+      annotations:
+        bbb-k8s/config-sha: {{ toYaml $config | sha256sum | trunc 16 | quote }}
+    spec:
+      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.livekit.role) | nindent 6 }}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # The Service named livekit would inject LIVEKIT_PORT=tcp://... (service links), which
+      # livekit-server reads as its --port flag and refuses to start.
+      enableServiceLinks: false
+      containers:
+        - name: livekit
+          image: {{ .Values.livekit.image }}
+          args: ["--config", "/etc/livekit/livekit.yaml"]
+          ports:
+            - name: http
+              containerPort: 7880
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 7880
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 7880
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.livekit.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/livekit/livekit.yaml
+              subPath: livekit.yaml
+            - name: keys
+              mountPath: /etc/livekit/keys
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: livekit-config
+        - name: keys
+          secret:
+            secretName: {{ .Values.secrets.livekit }}
+            items:
+              - key: keys.yaml
+                path: keys.yaml
+            # livekit-server refuses a key file that others can read (spec D7).
+            defaultMode: 0440

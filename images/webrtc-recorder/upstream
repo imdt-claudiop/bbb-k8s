@@ -1,0 +1,4 @@
+# Built from the upstream repository at the tag the monorepo pins
+# (bbb-webrtc-recorder.placeholder.sh), with its own Dockerfile, unchanged. See images/build.sh.
+repo=https://github.com/bigbluebutton/bbb-webrtc-recorder
+placeholder=bbb-webrtc-recorder.placeholder.sh

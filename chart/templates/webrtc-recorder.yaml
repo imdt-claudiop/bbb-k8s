@@ -1,0 +1,77 @@
+# /var/lib/bbb-webrtc-recorder: the tracks the recorder writes and the recording processing
+# (next slice) archives. Same storage node as bbb-data (spec D2).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bbb-recorder
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: {{ .Values.webrtcRecorder.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.webrtcRecorder.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bbb-webrtc-recorder
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- include "bbb.selector" "bbb-webrtc-recorder" | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "bbb.selector" "bbb-webrtc-recorder" | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.selector" "bbb-webrtc-recorder" | nindent 8 }}
+    spec:
+      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      securityContext:
+        runAsUser: 998
+        runAsGroup: 998
+        fsGroup: 998
+      containers:
+        - name: bbb-webrtc-recorder
+          image: {{ include "bbb.image" (dict "root" . "name" "webrtc-recorder" "tag" .Values.webrtcRecorder.tag) }}
+          # The image's config file is the only one (config files do not merge: loader.go);
+          # the cluster wiring comes as BBBRECORDER_* environment overrides, the same names the
+          # bbb-livekit postinst writes into /etc/default/bbb-webrtc-recorder.
+          env:
+            - name: BBBRECORDER_PUBSUB_ADAPTERS_REDIS_ADDRESS
+              value: redis:6379
+            - name: BBBRECORDER_PUBSUB_ADAPTERS_REDIS_NETWORK
+              value: tcp
+            - name: BBBRECORDER_LIVEKIT_HOST
+              value: ws://livekit:7880
+            - name: BBBRECORDER_LIVEKIT_APIKEY
+              value: {{ .Values.livekit.apiKey | quote }}
+            - name: BBBRECORDER_LIVEKIT_APISECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.livekit }}
+                  key: api-secret
+          lifecycle:
+            # The recorder finalizes files on SIGINT/SIGHUP only (internal/app/app.go):
+            # a plain SIGTERM would cut recordings in progress (spec PR candidate 7).
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "kill -INT 1; sleep 10"]
+          resources:
+            {{- toYaml .Values.webrtcRecorder.resources | nindent 12 }}
+          volumeMounts:
+            - name: recordings
+              mountPath: /var/lib/bbb-webrtc-recorder
+      volumes:
+        - name: recordings
+          persistentVolumeClaim:
+            claimName: bbb-recorder
