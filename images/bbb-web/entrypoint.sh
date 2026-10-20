@@ -1,6 +1,7 @@
 #!/bin/bash
 # Start bbb-web the way bbb-web.service does, after the setup the packages do at install time.
-# Env: SHARED_SECRET (securitySalt), optional INITIAL_HEAP_SIZE / MAX_HEAP_SIZE.
+# Env: SHARED_SECRET (securitySalt), optional INITIAL_HEAP_SIZE / MAX_HEAP_SIZE, and JAVA_OPTS
+# (extra JVM options, e.g. the logback config the chart mounts).
 set -euo pipefail
 : "${SHARED_SECRET:?}"
 
@@ -19,8 +20,10 @@ done
 } > /etc/bigbluebutton/bbb-web.properties
 
 cd /usr/share/bbb-web
+# shellcheck disable=SC2086 # JAVA_OPTS holds several options
 exec java -Dgrails.env=prod -Dserver.address=0.0.0.0 -Dserver.port=8090 \
   -Dspring.main.allow-circular-references=true \
   -Xms"${INITIAL_HEAP_SIZE:-384m}" -Xmx"${MAX_HEAP_SIZE:-384m}" \
   -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/bigbluebutton/diagnostics \
+  ${JAVA_OPTS:-} \
   -cp 'WEB-INF/lib/*:/:WEB-INF/classes/:.' org.springframework.boot.loader.launch.WarLauncher
