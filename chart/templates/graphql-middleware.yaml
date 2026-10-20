@@ -61,6 +61,14 @@ spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.graphqlMiddleware.role) | nindent 6 }}
       imagePullSecrets:
         - name: {{ .Values.imagePullSecret }}
+      initContainers:
+        # The middleware's Redis listener dereferences a nil message whenever a receive fails
+        # (internal/websrv/rediscli.go), so a start before Redis answers ends in a panic and a
+        # crash loop. Start it only once Redis replies. A later Redis restart still crashes it
+        # until Redis is back (upstream fix pending; see docs/install.md).
+        - name: wait-redis
+          image: {{ .Values.redis.image }}
+          command: ["sh", "-c", "until [ \"$(redis-cli -h redis ping 2>/dev/null)\" = PONG ]; do echo waiting for redis; sleep 2; done"]
       containers:
         - name: gql-middleware
           image: {{ include "bbb.image" (dict "root" . "name" "graphql-middleware" "tag" .Values.graphqlMiddleware.tag) }}

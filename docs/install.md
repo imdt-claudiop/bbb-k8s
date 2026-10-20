@@ -118,5 +118,9 @@ Then confirm in the DigitalOcean panel or with `doctl compute volume list` that 
   slices); the probes are TCP only for that reason.
 - One replica per service; restarting akka-apps ends the meetings it holds (spec L1, L2).
 - No client can connect through the middleware until bbb-web exists (next slice).
+- The middleware panics whenever a Redis receive fails (`internal/websrv/rediscli.go`
+  dereferences the nil message): an init container holds it until Redis answers at start, but
+  a Redis restart still makes it crash and restart until Redis is back (observed: 3 restarts,
+  then Running). Clients connected through it reconnect.
 - Changing the middleware ConfigMap does not restart the middleware: restart it
   (`kubectl -n bbb rollout restart deploy/gql-middleware`).
