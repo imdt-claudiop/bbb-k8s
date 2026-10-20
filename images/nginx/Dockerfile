@@ -57,6 +57,13 @@ RUN sed -i -e 's|http://127.0.0.1:8090|http://bbb-web:8090|g' \
            -e 's|http://127.0.0.1:3008|http://bbb-webrtc-sfu:3008|g' /f/*.nginx \
     && ! grep -n '^[^#]*127\.0\.0\.1' /f/*.nginx
 
+FROM ${BUILDER_IMAGE} AS apimate
+# API-Mate static UI. Not a BBB package (no dpkg owner; bbb-conf only links to
+# https://mconf.github.io/api-mate/). Pinned to the exact upstream commit for provenance.
+RUN git clone --branch gh-pages https://github.com/mconf/api-mate /api-mate \
+    && git -C /api-mate checkout d058fb77e11113c39ae84b2e9c6831a794cf9bbe \
+    && rm -rf /api-mate/.git
+
 FROM nginxinc/nginx-unprivileged:1.29
 ARG SOURCE_SHA=unknown
 LABEL org.opencontainers.image.source="https://github.com/imdt-claudiop/bbb-k8s" \
@@ -71,8 +78,12 @@ COPY --from=playback /src/bbb-playback/build /opt/playback/presentation/2.3
 COPY --from=src bigbluebutton-config/assets /var/www/bigbluebutton-default/assets
 COPY --from=fragments /f/conf.d/ /etc/nginx/conf.d/
 COPY --from=fragments /f/*.nginx /f/bbb-html5.nginx.static /usr/share/bigbluebutton/nginx/
+# API-Mate at /api-mate/: the static bundle plus our serving fragment (included by the chart's
+# server block via /usr/share/bigbluebutton/nginx/*.nginx).
+COPY --from=apimate /api-mate /usr/share/api-mate
+COPY api-mate.nginx /usr/share/bigbluebutton/nginx/api-mate.nginx
 # bbb-config's postinst raises worker_connections to 10000; the server block comes from the chart.
 RUN sed -i 's/worker_connections .*/worker_connections 10000;/' /etc/nginx/nginx.conf \
     && rm -f /etc/nginx/conf.d/default.conf \
-    && chmod -R a+rX /usr/share/bigbluebutton /var/www/bigbluebutton-default /opt/learning-dashboard /opt/playback
+    && chmod -R a+rX /usr/share/bigbluebutton /usr/share/api-mate /var/www/bigbluebutton-default /opt/learning-dashboard /opt/playback
 USER 998:998

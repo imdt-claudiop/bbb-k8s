@@ -106,6 +106,26 @@ client always uses `https`/`wss` on port 443 of the page's host.
   dashboard app is copied into `/var/bigbluebutton/learning-dashboard` by an init container.
   Its ingress is the public entry point below.
 
+### API-Mate
+
+The front nginx also serves **API-Mate** at `https://<publicHost>/api-mate/`, a small static page
+to build and sign BigBlueButton API calls by hand. It is the upstream
+[mconf/api-mate](https://github.com/mconf/api-mate) bundle (gh-pages, pinned to commit
+`d058fb77e11113c39ae84b2e9c6831a794cf9bbe` and fetched at image build time); it is not a BBB package
+(`bbb-conf` only links to `mconf.github.io/api-mate`). Its serving fragment uses a trailing-slash
+`location /api-mate/` + `alias` on purpose, to avoid the nginx off-by-slash alias traversal.
+
+Build a ready-to-use link by filling the server and the shared secret in the URL fragment:
+
+```
+https://<publicHost>/api-mate/#server=https://<publicHost>/bigbluebutton/&sharedSecret=<secret>
+# secret:
+kubectl -n bbb get secret bbb-salt -o jsonpath='{.data.security-salt}' | base64 -d
+```
+
+The shared secret stays in the browser URL **fragment** (after `#`), so it is never sent to the
+server; api-mate reads it client-side to sign the calls.
+
 ## Media: LiveKit
 
 - **livekit-server** runs the upstream image of the version the `bbb-livekit` package builds

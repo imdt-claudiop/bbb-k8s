@@ -108,7 +108,7 @@ bbbWeb:
     limits: { cpu: "2", memory: 3Gi }
 
 nginx:
-  tag: "4.1-66b0bb09-s6a"
+  tag: "4.1-66b0bb09-20261020133303"
   tlsSecret: bbb-tls  # kubernetes.io/tls, created by scripts/create-secrets.sh
   # Public entry point: a DigitalOcean LoadBalancer in TCP mode in front of this nginx, which
   # terminates TLS itself (docs/install.md, "Public entry point").
