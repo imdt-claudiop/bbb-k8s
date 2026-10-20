@@ -1,0 +1,146 @@
+{{- define "bbb.sharedNotesConf" -}}
+# Hosts rewritten from the package defaults (127.0.0.1) to this chart's Service names. The server
+# listens on 0.0.0.0 so the front nginx (another pod) can reach it. The DB password placeholder is
+# filled by the render-config init container from the bbb-db secret.
+expressServer:
+  host: 0.0.0.0
+  port: 8787
+  maxContentLength: 1500
+  maxConnectionsPerSessionToken: 3
+hocuspocusServer:
+  host: 127.0.0.1
+  port: 9001
+commandExecution:
+  workDir: /tmp/shared-notes-dropbox/
+  runnerScript: /usr/share/bbb-shared-notes-server/run-in-systemd.sh
+  timeout: 30
+bbbWeb:
+  host: bbb-web
+  port: 8090
+  presentationEndpoint: /bigbluebutton/presentation
+  checkAuthorizationEndpoint: /bigbluebutton/connection/checkGraphqlAuthorization
+log:
+  level: info
+redis:
+  host: redis
+  port: 6379
+  password: null
+  channels:
+    publish:
+      - to-akka-apps-redis-channel
+    subscribe:
+      - from-akka-apps-redis-channel
+rateLimit:
+  maxRequestsPerWindow: 60
+  windowInSeconds: 60
+postgres:
+  host: postgres
+  port: 5432
+  database: blocknote_app
+  user: blocknote_app
+  password: __BLOCKNOTE_PW__
+  documentExpireMinutesAfterMeetingEnd: 60
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bbb-shared-notes-config
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+data:
+  default.yml: |
+    {{- include "bbb.sharedNotesConf" . | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bbb-shared-notes
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "bbb.selector" "bbb-shared-notes" | nindent 4 }}
+  ports:
+    - name: http
+      port: 8787
+---
+# bbb-shared-notes-server: collaborative notes (Hocuspocus/Yjs + BlockNote). Persists documents in
+# the blocknote_app database (created by the bootstrap Job) and is reached by the html5 client at
+# /hocuspocus/collaboration through the front nginx (bbb-shared-notes-server.nginx fragment), whose
+# auth_request validates the session against bbb-web.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bbb-shared-notes
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+    {{- include "bbb.selector" "bbb-shared-notes" | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "bbb.selector" "bbb-shared-notes" | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bbb.labels" . | nindent 8 }}
+        {{- include "bbb.selector" "bbb-shared-notes" | nindent 8 }}
+      annotations:
+        # Reads config/default.yml once at start: roll the pod when the config changes.
+        bbb-k8s/config-sha: {{ include "bbb.sharedNotesConf" . | sha256sum | trunc 16 | quote }}
+    spec:
+      {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.sharedNotes.role) | nindent 6 }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      initContainers:
+        {{- include "bbb.waitBootstrap" (dict "root" . "user" "blocknote_app" "key" "blocknote-app-password") | nindent 8 }}
+        # Fill the DB password placeholder from the secret into the runtime config.
+        - name: render-config
+          image: {{ .Values.postgres.image }}
+          command:
+            - sh
+            - -c
+            - sed "s|__BLOCKNOTE_PW__|$BLOCKNOTE_APP_PASSWORD|" /tmpl/default.yml > /config/default.yml
+          env:
+            {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "BLOCKNOTE_APP_PASSWORD" "key" "blocknote-app-password") | nindent 12 }}
+          volumeMounts:
+            - name: config-tmpl
+              mountPath: /tmpl
+            - name: config
+              mountPath: /config
+      containers:
+        - name: bbb-shared-notes
+          image: {{ include "bbb.image" (dict "root" . "name" "shared-notes" "tag" .Values.sharedNotes.tag) }}
+          ports:
+            - name: http
+              containerPort: 8787
+          readinessProbe:
+            tcpSocket:
+              port: 8787
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8787
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.sharedNotes.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /usr/share/bbb-shared-notes-server/config
+            - name: dropbox
+              mountPath: /tmp/shared-notes-dropbox
+      volumes:
+        - name: config-tmpl
+          configMap:
+            name: bbb-shared-notes-config
+        - name: config
+          emptyDir: {}
+        - name: dropbox
+          emptyDir: {}

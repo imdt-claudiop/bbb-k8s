@@ -3,7 +3,7 @@
 #
 # Usage: images/build.sh <component>...
 #   components: akka-apps bootstrap hasura hasura-metadata graphql-middleware graphql-actions
-#               bbb-web nginx webrtc-sfu webrtc-recorder recording
+#               shared-notes bbb-web nginx webrtc-sfu webrtc-recorder recording
 #
 # Env:
 #   BBB_REPO   path to a bigbluebutton monorepo clone (required unless SRC_DIR is set)
@@ -96,6 +96,7 @@ for c in "$@"; do
       ;;
     graphql-middleware) set_value graphqlMiddleware tag "$TAG" ;;
     graphql-actions) set_value graphqlActions tag "$TAG" ;;
+    shared-notes) set_value sharedNotes tag "$TAG" ;;
     bbb-web) set_value bbbWeb tag "$TAG" ;;
     nginx) set_value nginx tag "$TAG" ;;
     webrtc-sfu)

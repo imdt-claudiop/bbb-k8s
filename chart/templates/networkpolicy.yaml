@@ -80,10 +80,13 @@ spec:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
 {{- include "bbb.netpol" (dict "root" . "name" "postgres"
-      "ingress" (list (list 5432 (list "bootstrap" "akka-apps" "hasura" "hasura-metadata")))) }}
+      "ingress" (list (list 5432 (list "bootstrap" "akka-apps" "hasura" "hasura-metadata" "bbb-shared-notes")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "redis"
       "ingress" (list (list 6379 (list "akka-apps" "gql-actions" "gql-middleware" "bbb-web"
-                                       "bbb-webrtc-sfu" "bbb-webrtc-recorder" "recording")))) }}
+                                       "bbb-webrtc-sfu" "bbb-webrtc-recorder" "recording" "bbb-shared-notes")))) }}
+{{- include "bbb.netpol" (dict "root" . "name" "bbb-shared-notes"
+      "ingress" (list (list 8787 (list "bbb-nginx")))
+      "egress" (list (list 5432 (list "postgres")) (list 6379 (list "redis")) (list 8090 (list "bbb-web")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "bootstrap"
       "egress" (list (list 5432 (list "postgres")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "akka-apps"
@@ -104,7 +107,7 @@ spec:
                      (list 8901 (list "akka-apps")) (list 8090 (list "bbb-web")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "bbb-nginx"
       "egress" (list (list 8090 (list "bbb-web")) (list 8378 (list "gql-middleware")) (list 8085 (list "hasura"))
-                     (list 3008 (list "bbb-webrtc-sfu")))) }}
+                     (list 3008 (list "bbb-webrtc-sfu")) (list 8787 (list "bbb-shared-notes")))) }}
 ---
 # Public entry: the DigitalOcean LoadBalancer forwards clients to nginx with their own source IP
 # (externalTrafficPolicy Local), so an ipBlock admits them. bbb-web also reaches nginx through
@@ -145,6 +148,7 @@ spec:
         {{- include "bbb.peer" "bbb-nginx" | nindent 8 }}
         {{- include "bbb.peer" "gql-middleware" | nindent 8 }}
         {{- include "bbb.peer" "akka-apps" | nindent 8 }}
+        {{- include "bbb.peer" "bbb-shared-notes" | nindent 8 }}
       ports:
         - { protocol: TCP, port: 8090 }
   egress:
