@@ -1,4 +1,4 @@
-{{- $schemaSha := required "bootstrap.schemaSha is empty: run images/build.sh bootstrap" .Values.bootstrap.schemaSha }}
+{{- $schemaSha := required "bootstrap.schemaSha is empty: run scripts/sync-upstream.sh" .Values.bootstrap.schemaSha }}
 apiVersion: v1
 kind: Service
 metadata:

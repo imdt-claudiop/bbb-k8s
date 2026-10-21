@@ -10,7 +10,6 @@ itself go upstream as pull requests; this repository only holds the packaging.
 | Path | Contents |
 |---|---|
 | `chart/` | Helm chart (`appVersion` = BigBlueButton line) |
-| `images/` | The images this repository built before the switch to the official ones; unused by the chart |
 | `scripts/` | Cluster helpers (`create-secrets.sh`, `public-host.sh`, `sync-upstream.sh`) |
 | `docs/` | Install and operation runbooks |
 | `.github/workflows/` | Static checks: helm lint, kubeconform, shellcheck |

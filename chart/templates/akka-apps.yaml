@@ -1,4 +1,4 @@
-{{- $schemaSha := required "bootstrap.schemaSha is empty: run images/build.sh bootstrap" .Values.bootstrap.schemaSha }}
+{{- $schemaSha := required "bootstrap.schemaSha is empty: run scripts/sync-upstream.sh" .Values.bootstrap.schemaSha }}
 {{- define "bbb.akkaConf" -}}
 include file("/usr/share/bbb-apps-akka/conf/application.conf")
 
@@ -36,7 +36,7 @@ data:
   bbb-html5.yml: |
     {{- toYaml .Values.clientSettingsOverride | nindent 4 }}
   settings.yml: |
-    {{- .Files.Get "files/settings.yml" | required "chart/files/settings.yml is missing: run images/build.sh akka-apps" | nindent 4 }}
+    {{- .Files.Get "files/settings.yml" | required "chart/files/settings.yml is missing: run scripts/sync-upstream.sh" | nindent 4 }}
 ---
 apiVersion: v1
 kind: Service

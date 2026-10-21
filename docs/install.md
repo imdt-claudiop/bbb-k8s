@@ -49,9 +49,6 @@ BBB_REPO=/path/to/bigbluebutton scripts/sync-upstream.sh <commit>
 # then set officialImages.tag to <branch>-<sha7> of the same commit, and review the diff
 ```
 
-`images/` and `images/build.sh` built the images of this repository before the switch; nothing in
-the chart uses them.
-
 ## Install
 
 The public host is derived from the IP of the LoadBalancer, which only exists once the chart

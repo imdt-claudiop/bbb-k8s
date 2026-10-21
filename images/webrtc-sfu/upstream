@@ -1,4 +1,0 @@
-# Built from the upstream repository at the tag the monorepo pins (bbb-webrtc-sfu.placeholder.sh),
-# with its own Dockerfile, unchanged. See images/build.sh.
-repo=https://github.com/bigbluebutton/bbb-webrtc-sfu
-placeholder=bbb-webrtc-sfu.placeholder.sh

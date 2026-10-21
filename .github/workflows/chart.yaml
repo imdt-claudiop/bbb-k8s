@@ -31,4 +31,4 @@ jobs:
       - name: shellcheck
         run: |
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.10.0 \
-            scripts/*.sh images/build.sh images/*/*.sh chart/scripts/*.sh
+            scripts/*.sh chart/scripts/*.sh
