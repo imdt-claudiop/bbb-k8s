@@ -191,9 +191,8 @@ webrtcRecorder:
     requests: { cpu: 250m, memory: 256Mi }
     limits: { cpu: "1", memory: 1Gi }
 
-# --- Recording (record-and-playback: rap-starter + resque workers, presentation format) -------
+# --- Recording (record-and-playback: rap-starter + resque workers) ----------------------------
 recording:
-  tag: "4.1-66b0bb09-s6b"
   # Overrides merged over the package's bigbluebutton.yml (chart/files/bigbluebutton.yml).
   config: {}
   # Spec 3.3: 1 CPU / 1 Gi requested for the pod, ffmpeg bursts up to 3 CPU / 3 Gi. The storage

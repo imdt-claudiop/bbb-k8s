@@ -27,8 +27,6 @@ spec:
             {{- include "bbb.selector" "recording-cleanup" | nindent 12 }}
         spec:
           {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 10 }}
-          imagePullSecrets:
-            - name: {{ .Values.imagePullSecret }}
           securityContext:
             runAsUser: 998
             runAsGroup: 998
@@ -36,14 +34,9 @@ spec:
           restartPolicy: Never
           containers:
             - name: cleanup
-              image: {{ include "bbb.image" (dict "root" . "name" "recording" "tag" .Values.recording.tag) }}
+              image: {{ include "bbb.officialImage" (dict "root" . "name" "record-and-playback") }}
               args: ["bundle", "exec", "ruby", "cleanup.rb"]
               env:
-                - name: SHARED_SECRET
-                  valueFrom:
-                    secretKeyRef:
-                      name: {{ .Values.secrets.salt }}
-                      key: security-salt
                 - name: REDIS_URL
                   value: redis://redis:6379
               volumeMounts:

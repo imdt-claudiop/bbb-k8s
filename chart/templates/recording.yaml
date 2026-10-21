@@ -44,33 +44,48 @@ spec:
         bbb-k8s/config-sha: {{ toYaml $config | sha256sum | trunc 16 | quote }}
     spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
-      imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
       securityContext:
         runAsUser: 998
         runAsGroup: 998
         fsGroup: 998
       initContainers:
         {{- include "bbb.waitRedis" . | nindent 8 }}
-      containers:
-        {{- range $c := list (dict "name" "rap-starter" "res" "rapStarter" "args" (list "bundle" "exec" "ruby" "rap-starter.rb"))
-                             (dict "name" "resque-worker" "res" "resqueWorker" "args" (list "bundle" "exec" "rake" "-f" "Rakefile" "resque:workers")) }}
-        - name: {{ $c.name }}
-          image: {{ include "bbb.image" (dict "root" $ "name" "recording" "tag" $.Values.recording.tag) }}
-          args: {{ toJson $c.args }}
+        # What the package postinsts set up and the official image keeps in its own filesystem,
+        # hidden here by the mounts: the directory tree on bbb-data, the per-format log folders,
+        # and bbb-web.properties with securitySalt, which the recording-ready callback reads. The
+        # file is mounted by itself so the image's /etc/bigbluebutton/bigbluebutton-release
+        # stays visible.
+        - name: setup
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "record-and-playback") }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              printf 'securitySalt=%s\n' "$SHARED_SECRET" > /props/bbb-web.properties
+              mkdir -p /var/log/bigbluebutton/presentation /var/log/bigbluebutton/video /var/log/bigbluebutton/notes /var/log/bigbluebutton/screenshare
+              {{ include "bbb.dataTree" . }}
           env:
             - name: SHARED_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ $.Values.secrets.salt }}
+                  name: {{ .Values.secrets.salt }}
                   key: security-salt
-            {{- if eq $c.name "resque-worker" }}
-            # bbb-rap-resque-worker.service
-            - name: QUEUE
-              value: rap:archive,rap:publish,rap:process,rap:sanity,rap:captions,rap:events
-            - name: COUNT
-              value: "1"
-            {{- end }}
+          volumeMounts:
+            - name: props
+              mountPath: /props
+            - name: data
+              mountPath: /var/bigbluebutton
+            - name: logs
+              mountPath: /var/log/bigbluebutton
+      containers:
+        {{- range $c := list (dict "name" "rap-starter" "res" "rapStarter" "args" (list "bundle" "exec" "ruby" "rap-starter.rb"))
+                             (dict "name" "resque-worker" "res" "resqueWorker" "args" (list "bundle" "exec" "rake" "-f" "Rakefile" "resque:workers")) }}
+        - name: {{ $c.name }}
+          image: {{ include "bbb.officialImage" (dict "root" $ "name" "record-and-playback") }}
+          # The image runs the resque workers by default (QUEUE and COUNT of
+          # bbb-rap-resque-worker.service preset); rap-starter is the other process of the image.
+          args: {{ toJson $c.args }}
           resources:
             {{- toYaml (index $.Values.recording.resources $c.res) | nindent 12 }}
           volumeMounts:
@@ -84,6 +99,10 @@ spec:
             - name: config
               mountPath: /etc/bigbluebutton/recording/recording.yml
               subPath: bigbluebutton.yml
+            - name: props
+              mountPath: /etc/bigbluebutton/bbb-web.properties
+              subPath: bbb-web.properties
+              readOnly: true
             - name: logs
               mountPath: /var/log/bigbluebutton
             - name: tmp
@@ -99,6 +118,8 @@ spec:
         - name: config
           configMap:
             name: recording-config
+        - name: props
+          emptyDir: {}
         - name: logs
           emptyDir: {}
         - name: tmp
