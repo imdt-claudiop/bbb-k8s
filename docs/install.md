@@ -12,7 +12,6 @@ playback (presentation format).
 - `kubectl` and `helm` (v3) pointing at the cluster.
 - A storage class named `do-block-storage-retain` (DigitalOcean Kubernetes ships it), or set
   `postgres.storageClass` / `redis.storageClass`.
-- A token that can read the bbb-k8s packages on ghcr.io (`read:packages`).
 
 ### Node roles
 
@@ -32,13 +31,34 @@ Postgres and Hasura run on `data`; Redis, akka-apps, graphql-actions and graphql
 `kubectl label` are lost when the managed cluster replaces a node (upgrade, pool change):
 re-apply them, or set them as node pool labels in the cloud provider.
 
+## Images
+
+Every BigBlueButton component runs the official image the monorepo publishes
+(`docker/README.md` there): `ghcr.io/bigbluebutton/bigbluebutton/bbb-<target>`, at the immutable
+per-commit tag in `officialImages.tag` (`<branch>-<sha7>`, e.g. `v4.1.x-develop-c58638f`), never
+the moving branch tag. Postgres, Redis and LiveKit are their upstream images. The images are
+public. The chart adds only deployment configuration: the files mounted at the bare-metal paths,
+init containers for what a package postinst does on a volume, and the Service names.
+
+Some chart files must match the images: the client settings, the recording config, the LiveKit
+config, the nginx location files and the schema sha. `scripts/sync-upstream.sh` writes them all
+from `bbb.sourceSha`. To move to a new commit:
+
+```bash
+BBB_REPO=/path/to/bigbluebutton scripts/sync-upstream.sh <commit>
+# then set officialImages.tag to <branch>-<sha7> of the same commit, and review the diff
+```
+
+`images/` and `images/build.sh` built the images of this repository before the switch; nothing in
+the chart uses them.
+
 ## Install
 
 The public host is derived from the IP of the LoadBalancer, which only exists once the chart
 created it, so the first install has two steps:
 
 ```bash
-GHCR_USER=<user> GHCR_TOKEN=<token> scripts/create-secrets.sh   # namespace bbb + Secrets
+scripts/create-secrets.sh   # namespace bbb + Secrets
 # 1. any host to get the LoadBalancer created
 helm upgrade --install bbb chart -n bbb --reset-values --set publicHost=pending.bbb.imdt.dev
 scripts/public-host.sh            # waits for the IP, checks public DNS, prints publicHost=...
@@ -51,14 +71,15 @@ kubectl -n bbb get pods -w
 
 `create-secrets.sh` generates the database passwords (`bbb-db`), the shared secret
 (`bbb-salt`) and the Hasura admin secret (`bbb-hasura`) once and keeps them on later runs; the
-pull Secret (`ghcr-pull`) and the TLS Secret (`bbb-tls`) are refreshed every run. Without
+TLS Secret (`bbb-tls`) is refreshed every run. The images are public: there is no pull Secret. Without
 `TLS_CERT`/`TLS_KEY` the TLS Secret holds the `*.bbb.imdt.dev` wildcard, downloaded from
 `a.bbb.imdt.dev` as bbb-docker-dev does (over plain HTTP, as there). Nothing secret lives in this repository.
 
 Expected order: `postgres-0` and `redis-0` start, the `bbb-bootstrap-<hash>` Job creates the
 roles and databases, and `akka-apps` stays in `Init` (container `wait-bootstrap`) until
 `bbb_graphql` carries the marker of the current schema, then starts. `hasura` waits for the
-same marker, the `hasura-metadata-<hash>` Job waits for Hasura and applies the metadata, and
+same marker and applies the metadata of its image before it opens 8085, the
+`hasura-metadata-<hash>` Job then checks that the metadata is consistent, and
 `gql-actions` / `gql-middleware` start right away (they only need Redis and Hasura at request
 time).
 
@@ -94,24 +115,35 @@ client always uses `https`/`wss` on port 443 of the page's host.
 
 ## How bbb-web and the front nginx are wired
 
-- **bbb-web** is the package's exploded war started with the `bbb-web.service` command line,
-  listening on 0.0.0.0:8090. `/etc/bigbluebutton/bbb-web.properties` is rendered at start from
-  the `bbb-web-config` ConfigMap plus `securitySalt` from `bbb-salt` (`bbbWeb.properties` in
-  values adds lines). The conversion wrapper `/usr/share/bbb-web/run-in-systemd.sh`, called by
-  that fixed path, is replaced by a plain `timeout` (no systemd in a container). Office
-  documents are not converted (no LibreOffice, spec L5); PDF and images are.
-- **nginx** serves the html5 client and the learning dashboard built from the pinned commit,
-  the default assets of bigbluebutton-config, and the package nginx fragments with their
-  loopback upstreams rewritten to `bbb-web:8090`, `gql-middleware:8378` and `hasura:8085`. The
-  dashboard app is copied into `/var/bigbluebutton/learning-dashboard` by an init container.
-  Its ingress is the public entry point below.
+- **bbb-web** is the official `bbb-web` image: the package's exploded war started with the
+  `bbb-web.service` command line, listening on 0.0.0.0:8090, heap from the image's
+  `JDK_JAVA_OPTIONS`. A `setup` init container writes `/etc/bigbluebutton/bbb-web.properties`
+  from the `bbb-web-config` ConfigMap plus `securitySalt` from `bbb-salt` (`bbbWeb.properties` in
+  values adds lines) and creates the directory tree on `bbb-data`. The file is mounted by itself
+  (subPath): the image's `/etc/bigbluebutton/nopdfmark.ps`, which the PDF page downscaler passes
+  to ghostscript, has to stay visible. The image's conversion wrapper
+  `/usr/share/bbb-web/run-in-systemd.sh` keeps only the timeout (no systemd in a container).
+  Office documents are not converted (no LibreOffice, spec L5); PDF and images are.
+- **nginx** is the official `bbb-nginx` image (the package site and location files) with this
+  chart's TLS site over `sites-available/bigbluebutton` and the location files of
+  `chart/files/nginx` over `/usr/share/bigbluebutton/nginx`: the image's own point at
+  127.0.0.1, these at the Services (`bbb-web:8090`, `gql-middleware:8378`, `hasura:8085`,
+  `livekit:7880`, `bbb-webrtc-sfu:3008`, `bbb-shared-notes:8787`, `bbb-webhooks:3005`), and they
+  add `webhooks.nginx`, which the image does not ship yet. The image's Hasura balancer site is
+  replaced by a comment (its `upstream hasura` would capture `http://hasura:8085`). It runs as
+  998 to read `bbb-data`, and serves the default assets, slides, recordings and dashboard reports
+  from there. Its ingress is the public entry point below.
+- **html5-client**, **learning-dashboard** and **playback** are the official static-app images
+  (nginx on 8080) that `bbb-nginx` proxies to by these Service names (`static-apps.yaml`).
 
 ### API-Mate
 
 The front nginx also serves **API-Mate** at `https://<publicHost>/api-mate/`, a small static page
 to build and sign BigBlueButton API calls by hand. It is the upstream
 [mconf/api-mate](https://github.com/mconf/api-mate) bundle (gh-pages, pinned to commit
-`d058fb77e11113c39ae84b2e9c6831a794cf9bbe` and fetched at image build time); it is not a BBB package
+`d058fb77e11113c39ae84b2e9c6831a794cf9bbe`), downloaded by an init container of the front nginx at pod
+start and checked against its sha256 (`nginx.apiMate` in values; while it is enabled, the
+`bbb-nginx-api-mate` NetworkPolicy lets that pod reach the internet on 443); it is not a BBB package
 (`bbb-conf` only links to `mconf.github.io/api-mate`). Its serving fragment uses a trailing-slash
 `location /api-mate/` + `alias` on purpose, to avoid the nginx off-by-slash alias traversal.
 
@@ -144,8 +176,9 @@ server; api-mate reads it client-side to sign the calls.
   reach a node's public IP, so LiveKit runs with `use_external_ip` (STUN maps the public
   interface) and announces the media node's VPC address too, restricted per cluster with
   `livekit.config.rtc.ips.includes`; the recorder connects over UDP to that VPC address.
-- Images: the SFU and the recorder are built from their upstream repositories at the tags the
-  monorepo placeholders pin, with their own Dockerfiles (`images/webrtc-*/upstream`).
+- Images: the official `bbb-webrtc-sfu` and `bbb-webrtc-recorder`, which the monorepo builds from
+  their repositories at the tags its placeholders pin. The recorder handles SIGINT but not yet
+  SIGTERM, so the chart stops it with SIGINT in a preStop hook.
 
 ### What the DOKS firewall lets through
 
@@ -182,20 +215,25 @@ filtered.
   presentation format into `/var/bigbluebutton/published/presentation/<id>`. getRecordings
   (bbb-web) reads the published metadata.
 - **One pod, two containers** (`recording`): `rap-starter` and `resque-worker`, from the
-  `recording` image (record-and-playback core + presentation scripts of the pinned commit on
-  Ubuntu 24.04, mkclean built from source). The config is the package's `bigbluebutton.yml`
+  official `bbb-record-and-playback` image (record-and-playback core with the presentation,
+  video, notes and screenshare formats; the `steps` of `bigbluebutton.yml` run presentation
+  only). A `setup` init container writes `bbb-web.properties` with `securitySalt` for the
+  recording-ready callback (mounted by itself, next to the image's `bigbluebutton-release`) and
+  creates the directory tree on `bbb-data`. The config is the package's `bigbluebutton.yml`
   (`chart/files/bigbluebutton.yml`) merged with Redis, `playback_host` = `publicHost` and the
   notes endpoint; it is mounted over the scripts' file and as the `recording.yml` override,
   because several scripts read the scripts' file directly.
-- **Logs**: the worker and rap-starter log to stdout (the package logs to journald, which a
-  container does not have: the image swaps that one line). The stage scripts keep their own
+- **Logs**: the worker and rap-starter log to stdout (without a systemd journal the
+  record-and-playback logger falls back to stdout). The stage scripts keep their own
   files in `/var/log/bigbluebutton` (an emptyDir), e.g. `archive-<id>.log`,
   `presentation/process-<id>.log`: `kubectl -n bbb exec deploy/recording -c resque-worker -- ls /var/log/bigbluebutton`.
-- **Playback**: the nginx image builds bbb-playback at the tag the monorepo pins and copies it
-  to `/var/bigbluebutton/playback/presentation/2.3` (where the package installs it) with an init
-  container; `/presentation/<id>` serves the published files from `bbb-data`.
-- **Scope**: presentation only (spec L7). No caption inbox (L8). No shared notes service, so
-  recordings have no notes (L6); the archive step only warns when a meeting had notes. The
+- **Playback**: the official `playback` image serves the player at `/playback/presentation/2.3`
+  (bbb-nginx proxies to it); `/presentation/<id>` serves the published files from `bbb-data`.
+- **Daily cleanup**: the `recording-cleanup` CronJob runs `cleanup.rb` from the same image.
+- **Scope**: presentation only (spec L7). No caption inbox (L8). Recordings have no notes (L6):
+  the notes endpoint of the recording config points at `shared-notes:8787`, while the Service is
+  `bbb-shared-notes` and the recording pod has no egress to it; the archive step only warns when
+  a meeting had notes. The
   player asks for optional files that this format does not produce here (notes.html,
   polls.json, external_videos.json, webcams.mp4) and gets 404s; this likely matches a package
   install without those features, but was not compared against one.
@@ -218,17 +256,16 @@ filtered.
 
 ## How the GraphQL stack is wired
 
-- **Hasura** runs the Community Edition engine the `bbb-graphql-server` package installs (the
-  binary published in `iMDT/hasura-graphql-engine`, checksum-pinned in `images/hasura`); the
-  official `hasura/graphql-engine` image, which ships the Pro Edition binary, only provides the
-  runtime libraries. Tuning comes from the package's `hasura-config.env` (`hasura.env` in values).
+- **Hasura** is the official `bbb-graphql-server` image: the Community Edition engine of the
+  package (taken from Hasura's `v2.49.3-ce` image), the defaults of the package's
+  `hasura-config.env` (`hasura.env` in values adds to them), and the BigBlueButton metadata of the
+  pinned commit, whose BigBlueButton source reads its URL from `HASURA_GRAPHQL_BBB_DATABASE_URL`.
   The auth hook is `akka-apps:8901/userInfo`, the action handler `gql-actions:8093`.
-- **Metadata**: `images/hasura-metadata` carries `bbb-graphql-server/metadata` of the pinned
-  commit, with the BigBlueButton source rewritten at build time to read its URL from
-  `HASURA_GRAPHQL_BBB_DATABASE_URL` (upstream it is a literal with `127.0.0.1` and a password).
-  The Job applies it, reloads, and fails unless Hasura reports the metadata as consistent. Its
-  name is derived from the schema sha, the metadata content sha and the image tag, so a new
-  schema (bootstrap recreates `bbb_graphql`) or new metadata re-runs it.
+- **Metadata**: the image's entrypoint applies it on a temporary server before the engine starts,
+  but `metadata apply` only warns on inconsistencies. The `hasura-metadata-<hash>` Job (same
+  image, hasura-cli) waits for port 8085, reloads, and fails unless Hasura reports the metadata
+  as consistent. Its name is derived from the schema sha and the image tag, so a new schema
+  (bootstrap recreates `bbb_graphql`) or a new image re-runs it.
 - **graphql-middleware** reads `/etc/bigbluebutton/bbb-graphql-middleware.yml` (a ConfigMap)
   over its packaged defaults: Service names instead of loopback, and Hasura directly on
   `hasura:8085` instead of the package's nginx load balancer on 8185. Its first hook is
@@ -239,23 +276,25 @@ filtered.
 
 ## How the database bootstrap behaves
 
-`images/bootstrap/bootstrap.sh` replaces the postinst of `bbb-graphql-server` and
-`bbb-shared-notes-server`, which drop the databases on every install.
+`chart/scripts/bootstrap.sh` replaces the postinst of `bbb-graphql-server` and
+`bbb-shared-notes-server`, which drop the databases on every install. It runs on the Postgres
+image; init containers copy `bbb_schema.sql` and `blocknote_schema.sql` from the official
+graphql-server and shared-notes-server images.
 
-- `bootstrap.schemaSha` in `chart/values.yaml` is written by `images/build.sh` and is the only
-  source of the schema marker. The Job refuses to run (`schema sha mismatch: image=...
-  values=...`) if it differs from the sha256 of the `bbb_schema.sql` inside the image; the
-  database is not touched in that case.
+- `bootstrap.schemaSha` in `chart/values.yaml` is written by `scripts/sync-upstream.sh` and is
+  the only source of the schema marker. The Job refuses to run (`schema sha mismatch: image=...
+  values=...`) if it differs from the sha256 of the copied `bbb_schema.sql`; the database is not
+  touched in that case.
 - `bbb_graphql` is dropped and recreated only when it is missing or its marker
   (`COMMENT ON DATABASE`, `schema-sha:<sha>`) differs. Otherwise the Job only re-asserts roles,
   passwords and grants. The marker is written last.
 - `hasura_app` and `blocknote_app` are created when missing and never dropped;
   `blocknote_schema.sql` is loaded only when `blocknote_app` is created.
-- The Job name is derived from the schema sha and the bootstrap image tag, so an upgrade that
-  changes either one creates a new Job instead of patching an immutable one.
+- The Job name is derived from the schema sha, the script and the Postgres image, so an
+  upgrade that changes any of them creates a new Job instead of patching an immutable one.
 - akka-apps carries the schema sha as a pod annotation: a new schema recreates akka-apps in the
   same upgrade, after the database. **A schema change ends every meeting in progress**: do it in
-  a maintenance window. A bootstrap image bump with the same schema does not restart akka-apps.
+  a maintenance window. A new image tag with the same schema does not re-run the bootstrap.
 
 ## Checking an install
 
@@ -299,9 +338,8 @@ Then confirm in the DigitalOcean panel or with `doctl compute volume list` that 
   slices); the probes are TCP only for that reason.
 - One replica per service; restarting akka-apps ends the meetings it holds (spec L1, L2).
 - Camera and screen sharing use the same LiveKit path but are not part of the validated set.
-- The middleware panics whenever a Redis receive fails (`internal/websrv/rediscli.go`
-  dereferences the nil message): an init container holds it until Redis answers at start, but
-  a Redis restart still makes it crash and restart until Redis is back (observed: 3 restarts,
-  then Running). Clients connected through it reconnect.
+- The middleware waits for its Redis subscription at start and exits when it loses it (by
+  design upstream), so a Redis restart restarts the middleware and drops the clients connected
+  through it; they reconnect.
 - Changing the middleware ConfigMap does not restart the middleware: restart it
   (`kubectl -n bbb rollout restart deploy/gql-middleware`).
