@@ -16,8 +16,8 @@
   `bigbluebutton/bigbluebutton` at `bbb.sourceSha`.
 - **Identifiers**: decisions are `D<n>` (section 14), limitations `L<n>` (section 15). The
   chart's comments and install.md cite them by these identifiers.
-- **Glossary**: *cell*, one complete BigBlueButton deployment (one release in one namespace,
-  one public host); *pin*, the pair `bbb.sourceSha` and `officialImages.tag`; *schema marker*,
+- **Glossary**: *cell*, one complete BigBlueButton deployment (one release in the namespace
+  `bbb` of a cluster, one public host); *pin*, the pair `bbb.sourceSha` and `officialImages.tag`; *schema marker*,
   the `schema-sha:<sha>` comment on the `bbb_graphql` database.
 
 ## 1. Purpose, scope and non-goals
@@ -124,7 +124,8 @@ Each invariant is a rule the code imposes; breaking it breaks the cell.
   and notes URLs from the page's host
   (`upstream:bigbluebutton-html5/imports/ui/components/livekit/primary-room/component.tsx:197`,
   `upstream:bigbluebutton-html5/imports/ui/components/bn-shared-notes/hooks.ts:65`). Verify: one
-  release per namespace, `publicHost` unique per release.
+  release per cluster, in the namespace `bbb` (`chart/templates/namespace.yaml:1-3` refuses any
+  other); `publicHost` unique per cluster.
 - **I4. Every pod that writes `bbb-data` or `bbb-recorder` MUST run as uid/gid 998.** The
   directories belong to `bigbluebutton` (998), and bbb-web, nginx, recording,
   export-annotations and the recorder read each other's files (`chart/templates/webrtc-recorder.yaml:38-41`,
@@ -143,8 +144,9 @@ A cell owns, and MUST NOT share (I3): its namespace, its Postgres StatefulSet an
 Redis StatefulSet and volume, its `bbb-data` and `bbb-recorder` volumes, its secrets, its
 `publicHost` and load balancer, and its media node's LiveKit (host network, one LiveKit per
 node because of the fixed ports). Inside the namespace a default-deny NetworkPolicy admits only
-the listed flows (`chart/templates/networkpolicy.yaml`, D6). The chart renders one cell per
-release; it does not route meetings between cells.
+the listed flows (`chart/templates/networkpolicy.yaml`, D6). The chart installs only into
+the namespace `bbb` (`chart/templates/namespace.yaml:1-3`), so a cluster holds one cell; it does
+not route meetings between cells.
 
 ## 7. Interfaces
 
@@ -339,3 +341,5 @@ identifier.
   (section 13).
 - **L15** external-dns publication of the public host was rendered, not run against a provider.
 - **L16** Scale limits per cell (meetings, participants) were not measured.
+- **L17** One cell per cluster: the namespace is fixed at `bbb`; a second cell needs another
+  cluster (or a chart change, phase 2).
