@@ -34,8 +34,6 @@ spec:
         {{- include "bbb.selector" "bbb-webrtc-recorder" | nindent 8 }}
     spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
-      imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
       securityContext:
         runAsUser: 998
         runAsGroup: 998
@@ -45,7 +43,7 @@ spec:
         {{- include "bbb.waitRedis" . | nindent 8 }}
       containers:
         - name: bbb-webrtc-recorder
-          image: {{ include "bbb.image" (dict "root" . "name" "webrtc-recorder" "tag" .Values.webrtcRecorder.tag) }}
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "webrtc-recorder") }}
           # The image's config file is the only one (config files do not merge: loader.go);
           # the cluster wiring comes as BBBRECORDER_* environment overrides, the same names the
           # bbb-livekit postinst writes into /etc/default/bbb-webrtc-recorder.

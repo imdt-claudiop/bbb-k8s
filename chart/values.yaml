@@ -1,7 +1,16 @@
-# BigBlueButton line this chart packages. Source commit of every image built by images/build.sh.
+# BigBlueButton line this chart packages: the monorepo commit the official images were built
+# from. chart/files/{settings.yml,bigbluebutton.yml,livekit.yaml,nginx/} and bootstrap.schemaSha
+# come from the same commit (scripts/sync-upstream.sh writes them all).
 bbb:
-  sourceSha: "66b0bb09591f4d66868f65822d918702ddf389cd"
+  sourceSha: "c58638fde5c7fa9ec9b855dc9ba8b73a80054814"
 
+# The official images (docker/README.md of the monorepo): <registry>/bbb-<target>:<tag>. The tag
+# is the immutable per-commit one CI publishes (<branch>-<sha7>), never the moving branch tag.
+officialImages:
+  registry: ghcr.io/bigbluebutton/bigbluebutton
+  tag: "v4.1.x-develop-c58638f"
+
+# Images still built from this repository (images/build.sh); removed once nothing uses them.
 registry: ghcr.io/imdt-claudiop/bbb-k8s
 imagePullSecret: ghcr-pull
 
@@ -41,7 +50,6 @@ bootstrap:
 clientSettingsOverride: {}
 
 akkaApps:
-  tag: "4.1-66b0bb09-b1"
   role: control
   resources:
     requests: { cpu: 500m, memory: 768Mi }
@@ -73,21 +81,18 @@ hasuraMetadata:
   metadataSha: "b862cd128c401d33ca9e62b7c3a4c8684639f257ae50c472403ce01cf8c70d69"
 
 graphqlActions:
-  tag: "4.1-66b0bb09-s2a"
   role: control
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }
 
 sharedNotes:
-  tag: "4.1-66b0bb09-20261020213511"
   role: control
   resources:
     requests: { cpu: 100m, memory: 192Mi }
     limits: { cpu: 500m, memory: 512Mi }
 
 exportAnnotations:
-  tag: "4.1-66b0bb09-20261020193503"
   # Runs on the storage role (bbbData.role) to read the presentation files on bbb-data.
   resources:
     requests: { cpu: 100m, memory: 256Mi }
@@ -99,14 +104,12 @@ recordingCleanup:
   schedule: "0 3 * * *"
 
 webhooks:
-  tag: "4.1-66b0bb09-20261020202245"
   role: control
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }
 
 graphqlMiddleware:
-  tag: "4.1-66b0bb09-s2a"
   role: control
   resources:
     requests: { cpu: 250m, memory: 256Mi }
@@ -177,14 +180,12 @@ livekit:
     limits: { cpu: "2", memory: 2Gi }
 
 webrtcSfu:
-  tag: "4.1-66b0bb09-s5a"
   role: media
   resources:
     requests: { cpu: 250m, memory: 256Mi }
     limits: { cpu: "1", memory: 1Gi }
 
 webrtcRecorder:
-  tag: "4.1-66b0bb09-s5a"
   storageClass: do-block-storage-retain
   size: 20Gi
   resources:

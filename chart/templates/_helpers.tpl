@@ -19,6 +19,11 @@ nodeSelector:
 {{ .root.Values.registry }}/{{ .name }}:{{ .tag }}
 {{- end }}
 
+{{/* An official image: include "bbb.officialImage" (dict "root" . "name" "web") */}}
+{{- define "bbb.officialImage" -}}
+{{ .root.Values.officialImages.registry }}/bbb-{{ .name }}:{{ required "officialImages.tag is empty" .root.Values.officialImages.tag }}
+{{- end }}
+
 {{/* Job name keyed on schema sha + bootstrap image tag: Job templates are immutable. */}}
 {{- define "bbb.bootstrapJobName" -}}
 bbb-bootstrap-{{ printf "%s%s" .Values.bootstrap.schemaSha .Values.bootstrap.tag | sha256sum | trunc 8 }}

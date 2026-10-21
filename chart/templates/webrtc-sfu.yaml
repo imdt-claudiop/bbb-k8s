@@ -36,16 +36,14 @@ spec:
         {{- include "bbb.selector" "bbb-webrtc-sfu" | nindent 8 }}
     spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.webrtcSfu.role) | nindent 6 }}
-      imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
       initContainers:
         # Spec order: livekit-server before the SFU, whose LiveKit controller syncs rooms at start.
         - name: wait-livekit
-          image: {{ include "bbb.image" (dict "root" . "name" "webrtc-sfu" "tag" .Values.webrtcSfu.tag) }}
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "webrtc-sfu") }}
           command: ["node", "-e", "(async()=>{for(;;){try{await fetch('http://livekit:7880/');return}catch(e){console.log('waiting for livekit');await new Promise(r=>setTimeout(r,2000))}}})()"]
       containers:
         - name: bbb-webrtc-sfu
-          image: {{ include "bbb.image" (dict "root" . "name" "webrtc-sfu" "tag" .Values.webrtcSfu.tag) }}
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "webrtc-sfu") }}
           env:
             # Only the LiveKit module (config/default.example.yml lists core, screenshare, video,
             # fullaudio and livekit).

@@ -94,12 +94,10 @@ spec:
         bbb-k8s/config-sha: {{ include "bbb.sharedNotesConf" . | sha256sum | trunc 16 | quote }}
     spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.sharedNotes.role) | nindent 6 }}
-      imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
       securityContext:
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
+        runAsUser: 998
+        runAsGroup: 998
+        fsGroup: 998
       initContainers:
         {{- include "bbb.waitBootstrap" (dict "root" . "user" "blocknote_app" "key" "blocknote-app-password") | nindent 8 }}
         # Fill the DB password placeholder from the secret into the runtime config.
@@ -118,7 +116,7 @@ spec:
               mountPath: /config
       containers:
         - name: bbb-shared-notes
-          image: {{ include "bbb.image" (dict "root" . "name" "shared-notes" "tag" .Values.sharedNotes.tag) }}
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "shared-notes-server") }}
           ports:
             - name: http
               containerPort: 8787

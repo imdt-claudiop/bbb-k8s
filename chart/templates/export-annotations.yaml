@@ -71,15 +71,13 @@ spec:
         bbb-k8s/config-sha: {{ include "bbb.exportAnnotationsConf" . | sha256sum | trunc 16 | quote }}
     spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
-      imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
       # No fsGroup: it would chown the whole bbb-data volume on every start.
       securityContext:
         runAsUser: 998
         runAsGroup: 998
       containers:
         - name: bbb-export-annotations
-          image: {{ include "bbb.image" (dict "root" . "name" "export-annotations" "tag" .Values.exportAnnotations.tag) }}
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "export-annotations") }}
           # No port and no health endpoint: the master process is the container's main process, so a
           # crash exits the container and the Deployment restarts it (no probe, which would need procps).
           env:

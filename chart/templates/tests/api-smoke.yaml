@@ -22,12 +22,10 @@ spec:
     runAsNonRoot: true
     runAsUser: 998
     runAsGroup: 998
-  imagePullSecrets:
-    - name: {{ .Values.imagePullSecret }}
   containers:
     - name: api-smoke
-      # Any image with bash, curl and sha256sum; this one is already pulled for the metadata Job.
-      image: {{ include "bbb.image" (dict "root" . "name" "hasura-metadata" "tag" .Values.hasuraMetadata.tag) }}
+      # Any image with bash, curl and sha256sum; the official akka-apps image has them.
+      image: {{ include "bbb.officialImage" (dict "root" . "name" "apps-akka") }}
       command: ["bash", "-c"]
       args:
         - {{ .Files.Get "scripts/api-smoke.sh" | toJson }}

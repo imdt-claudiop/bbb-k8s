@@ -69,11 +69,9 @@ spec:
         bbb-k8s/config-sha: {{ include "bbb.webhooksEnvMap" . | sha256sum | trunc 16 | quote }}
     spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.webhooks.role) | nindent 6 }}
-      imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
       containers:
         - name: bbb-webhooks
-          image: {{ include "bbb.image" (dict "root" . "name" "webhooks" "tag" .Values.webhooks.tag) }}
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "webhooks") }}
           env:
             - name: BBB_SERVER_DOMAIN
               value: {{ include "bbb.publicHost" . | quote }}

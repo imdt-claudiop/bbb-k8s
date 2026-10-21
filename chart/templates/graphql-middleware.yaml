@@ -59,8 +59,6 @@ spec:
         {{- include "bbb.selector" "gql-middleware" | nindent 8 }}
     spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.graphqlMiddleware.role) | nindent 6 }}
-      imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
       initContainers:
         # The middleware's Redis listener dereferences a nil message whenever a receive fails
         # (internal/websrv/rediscli.go), so a start before Redis answers ends in a panic and a
@@ -69,7 +67,7 @@ spec:
         {{- include "bbb.waitRedis" . | nindent 8 }}
       containers:
         - name: gql-middleware
-          image: {{ include "bbb.image" (dict "root" . "name" "graphql-middleware" "tag" .Values.graphqlMiddleware.tag) }}
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "graphql-middleware") }}
           ports:
             - name: http
               containerPort: 8378

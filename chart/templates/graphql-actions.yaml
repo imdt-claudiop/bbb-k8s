@@ -35,11 +35,9 @@ spec:
         {{- include "bbb.selector" "gql-actions" | nindent 8 }}
     spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.graphqlActions.role) | nindent 6 }}
-      imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
       containers:
         - name: gql-actions
-          image: {{ include "bbb.image" (dict "root" . "name" "graphql-actions" "tag" .Values.graphqlActions.tag) }}
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "graphql-actions") }}
           env:
             - name: BBB_REDIS_HOST
               value: redis

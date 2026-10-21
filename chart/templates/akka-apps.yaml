@@ -81,8 +81,6 @@ spec:
         bbb-k8s/config-sha: {{ include "bbb.akkaConf" . | sha256sum | trunc 16 | quote }}
     spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.akkaApps.role) | nindent 6 }}
-      imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
       securityContext:
         runAsUser: 998
         runAsGroup: 998
@@ -91,7 +89,7 @@ spec:
         {{- include "bbb.waitBootstrap" (dict "root" . "user" "bbb_core" "key" "bbb-core-password") | nindent 8 }}
       containers:
         - name: akka-apps
-          image: {{ include "bbb.image" (dict "root" . "name" "akka-apps" "tag" .Values.akkaApps.tag) }}
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "apps-akka") }}
           env:
             - name: INTERFACE
               value: "0.0.0.0"
