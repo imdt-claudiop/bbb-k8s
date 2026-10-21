@@ -12,8 +12,10 @@ spec:
     - name: http
       port: 8085
 ---
-# bbb-graphql-server: one Hasura instance (the package's bbb-graphql-server@8085). The Service
-# replaces the nginx load balancer on 127.0.0.1:8185 that the middleware points to.
+# bbb-graphql-server: one Hasura instance (the package's bbb-graphql-server@8085), from the
+# official image: the Community Edition engine of the package, and an entrypoint that applies the
+# BigBlueButton metadata of the image on a temporary server before it starts the engine. The
+# Service replaces the nginx load balancer on 127.0.0.1:8185 that the middleware points to.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -38,13 +40,11 @@ spec:
         bbb-k8s/schema-sha: {{ $schemaSha | quote }}
     spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.hasura.role) | nindent 6 }}
-      imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
       initContainers:
         {{- include "bbb.waitBootstrap" (dict "root" . "user" "bbb_hasura" "key" "bbb-hasura-password") | nindent 8 }}
       containers:
         - name: hasura
-          image: {{ include "bbb.image" (dict "root" . "name" "hasura" "tag" .Values.hasura.tag) }}
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "graphql-server") }}
           env:
             {{- range $k, $v := .Values.hasura.env }}
             - name: {{ $k }}
@@ -66,7 +66,7 @@ spec:
             # The passwords are hex (scripts/create-secrets.sh), safe inside a URL.
             - name: HASURA_GRAPHQL_DATABASE_URL
               value: postgres://hasura_app:$(HASURA_APP_PASSWORD)@postgres:5432/hasura_app
-            # Read by the BigBlueButton source of the metadata (images/hasura-metadata).
+            # Read by the BigBlueButton source of the image's metadata.
             - name: HASURA_GRAPHQL_BBB_DATABASE_URL
               value: postgres://bbb_hasura:$(BBB_HASURA_PASSWORD)@postgres:5432/bbb_graphql
           ports:

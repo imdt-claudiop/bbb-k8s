@@ -1,11 +1,12 @@
-{{- if not .Values.hasuraMetadata.metadataSha }}{{ fail "hasuraMetadata.metadataSha is empty: run images/build.sh hasura-metadata" }}{{ end }}
-# Applies the BigBlueButton metadata once Hasura is up. Plain resource keyed on the schema, the
-# metadata content and the image tag: a recreated bbb_graphql or new metadata re-runs it, an
-# unchanged release does not.
+# The official graphql-server image applies its metadata at start, but `metadata apply` only
+# warns on inconsistencies. This Job keeps the check the chart had: once Hasura is up, reload the
+# metadata and fail unless it is consistent. It uses hasura-cli from the same image. Plain
+# resource keyed on the schema and the image tag: a recreated bbb_graphql or a new image re-runs
+# it, an unchanged release does not.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: hasura-metadata-{{ printf "%s%s%s" .Values.bootstrap.schemaSha .Values.hasuraMetadata.metadataSha .Values.hasuraMetadata.tag | sha256sum | trunc 8 }}
+  name: hasura-metadata-{{ printf "%s%s" .Values.bootstrap.schemaSha .Values.officialImages.tag | sha256sum | trunc 8 }}
   labels:
     {{- include "bbb.labels" . | nindent 4 }}
     {{- include "bbb.selector" "hasura-metadata" | nindent 4 }}
@@ -18,23 +19,29 @@ spec:
         {{- include "bbb.selector" "hasura-metadata" | nindent 8 }}
     spec:
       restartPolicy: Never
-      imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
       initContainers:
         # Never check consistency while the bootstrap is recreating bbb_graphql.
         {{- include "bbb.waitBootstrap" (dict "root" . "user" "bbb_hasura" "key" "bbb-hasura-password") | nindent 8 }}
-        # Hasura answers /healthz only after its init container saw the current schema marker.
+        # Hasura opens 8085 only after its entrypoint applied the metadata.
         - name: wait-hasura
-          image: {{ include "bbb.image" (dict "root" . "name" "hasura-metadata" "tag" .Values.hasuraMetadata.tag) }}
-          command: ["sh", "-c", "until curl -fsS -o /dev/null http://hasura:8085/healthz; do echo waiting for hasura; sleep 3; done"]
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "graphql-server") }}
+          command: ["sh", "-c", "until nc -z hasura 8085; do echo waiting for hasura; sleep 3; done"]
       containers:
-        - name: apply
-          image: {{ include "bbb.image" (dict "root" . "name" "hasura-metadata" "tag" .Values.hasuraMetadata.tag) }}
+        - name: check
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "graphql-server") }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              mkdir -p /tmp/project && cd /tmp/project
+              printf 'version: 3\nendpoint: http://hasura:8085\n' > config.yaml
+              hasura-cli metadata reload --admin-secret "$HASURA_GRAPHQL_ADMIN_SECRET" --skip-update-check
+              hasura-cli metadata inconsistency status --admin-secret "$HASURA_GRAPHQL_ADMIN_SECRET" --skip-update-check
+              echo "metadata consistent"
           env:
             - name: HASURA_GRAPHQL_ENABLE_TELEMETRY
               value: "false"
-            - name: HASURA_ENDPOINT
-              value: http://hasura:8085
             - name: HASURA_GRAPHQL_ADMIN_SECRET
               valueFrom:
                 secretKeyRef:

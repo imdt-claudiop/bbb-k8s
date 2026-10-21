@@ -59,7 +59,6 @@ akkaApps:
 
 # --- GraphQL stack (bbb-graphql-server, -actions, -middleware) ------------------------------
 hasura:
-  tag: "4.1-66b0bb09-s2a"
   role: data          # next to Postgres: the hottest query path (spec D1)
   # hasura-config.env of the bbb-graphql-server package.
   env:
@@ -75,10 +74,6 @@ hasura:
     requests: { cpu: 500m, memory: 512Mi }
     limits: { cpu: "1", memory: 1Gi }
 
-hasuraMetadata:
-  # Both written by images/build.sh; metadataSha is the content hash of the applied metadata.
-  tag: "4.1-66b0bb09-s2a"
-  metadataSha: "b862cd128c401d33ca9e62b7c3a4c8684639f257ae50c472403ce01cf8c70d69"
 
 graphqlActions:
   role: control
