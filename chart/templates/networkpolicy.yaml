@@ -235,6 +235,9 @@ spec:
       "egress" (list (list 6379 (list "redis")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "recording"
       "egress" (list (list 6379 (list "redis")))) }}
+{{- /* Only on a cluster that runs Cilium (helm template: --api-versions
+       cilium.io/v2/CiliumNetworkPolicy). */}}
+{{- if .Capabilities.APIVersions.Has "cilium.io/v2/CiliumNetworkPolicy" }}
 ---
 # livekit-server runs with hostNetwork, so it carries the node identity and plain NetworkPolicy
 # podSelectors never match it. These Cilium policies name the node entities instead, only on
@@ -294,4 +297,68 @@ spec:
       toPorts:
         - ports:
             - { port: {{ index $target 1 | quote }}, protocol: TCP }
+{{- end }}
+{{- else }}
+{{- /* Without Cilium: the same flows as plain NetworkPolicies, by livekit.nodeIP. Right where
+       pods reach the media node at that address, as on a single machine (docs/k3s.md). */}}
+{{- $node := printf "%s/32" (required "livekit.nodeIP is empty" .Values.livekit.nodeIP) }}
+{{- $rtc := .Values.livekit.config.rtc | default dict }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: livekit-signaling-clients
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: ["bbb-nginx", "bbb-webrtc-sfu", "bbb-webrtc-recorder"]
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock: { cidr: {{ $node }} }
+      ports:
+        - { protocol: TCP, port: 7880 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bbb-webrtc-recorder-media
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "bbb.selector" "bbb-webrtc-recorder" | nindent 6 }}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock: { cidr: {{ $node }} }
+      ports:
+        {{- with $rtc.tcp_port }}
+        - { protocol: TCP, port: {{ . }} }
+        {{- end }}
+        - { protocol: UDP, port: 16384, endPort: 32768 }
+{{- range $target := list (list "redis" "6379") (list "bbb-webrtc-sfu" "3040") }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ index $target 0 }}-from-livekit-node
+  labels:
+    {{- include "bbb.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "bbb.selector" (index $target 0) | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - ipBlock: { cidr: {{ $node }} }
+      ports:
+        - { protocol: TCP, port: {{ index $target 1 }} }
+{{- end }}
 {{- end }}
