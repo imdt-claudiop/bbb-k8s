@@ -84,3 +84,10 @@ bbb-bootstrap-{{ printf "%s%s" .Values.bootstrap.schemaSha .Values.bootstrap.tag
         sleep 2
       done
 {{- end }}
+
+{{/* Shell command creating the tree under /var/bigbluebutton (the bbb-data volume) that the
+     package postinsts create (bbb-config, bbb-web, bbb-record-core and the playback formats). The
+     official images create it in their own filesystem, which the mounted volume hides. */}}
+{{- define "bbb.dataTree" -}}
+cd /var/bigbluebutton && mkdir -p recording/raw recording/process recording/status/recorded recording/status/archived recording/status/processed recording/status/sanity recording/status/ended recording/status/published events captions/inbox unpublished deleted basic_stats diagnostics learning-dashboard published/presentation published/video published/notes published/screenshare recording/publish/presentation recording/publish/video recording/publish/notes recording/publish/screenshare
+{{- end }}

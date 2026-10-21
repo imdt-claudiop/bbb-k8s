@@ -128,7 +128,6 @@ bbbData:
   role: storage       # every pod that mounts /var/bigbluebutton runs here (spec D2)
 
 bbbWeb:
-  tag: "4.1-66b0bb09-s3a"
   # Extra lines for /etc/bigbluebutton/bbb-web.properties (securitySalt comes from the Secret).
   properties: {}
   resources:

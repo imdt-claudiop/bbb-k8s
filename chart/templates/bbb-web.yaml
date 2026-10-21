@@ -16,7 +16,7 @@ metadata:
   labels:
     {{- include "bbb.labels" . | nindent 4 }}
 data:
-  # Template of /etc/bigbluebutton/bbb-web.properties; the entrypoint appends securitySalt.
+  # Template of /etc/bigbluebutton/bbb-web.properties; the setup init container appends securitySalt.
   bbb-web.properties: |
     {{- include "bbb.webProperties" . | nindent 4 }}
 ---
@@ -59,21 +59,42 @@ spec:
         bbb-k8s/properties-sha: {{ include "bbb.webProperties" . | sha256sum | trunc 16 | quote }}
     spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
-      imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
       securityContext:
         runAsUser: 998
         runAsGroup: 998
         fsGroup: 998
-      containers:
-        - name: bbb-web
-          image: {{ include "bbb.image" (dict "root" . "name" "bbb-web" "tag" .Values.bbbWeb.tag) }}
+      initContainers:
+        # The official image writes bbb-web.properties from its environment only when the file is
+        # missing; the chart's file carries more (the properties above), so it is written here:
+        # the template plus securitySalt from the Secret, into a file mounted by itself, which
+        # keeps the image's /etc/bigbluebutton/nopdfmark.ps (read by the page downscaler)
+        # visible. The same step creates the directory tree on the bbb-data volume.
+        - name: setup
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "web") }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              { cat /etc/bigbluebutton-template/bbb-web.properties; printf '\nsecuritySalt=%s\n' "$SHARED_SECRET"; } > /props/bbb-web.properties
+              {{ include "bbb.dataTree" . }}
           env:
             - name: SHARED_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.secrets.salt }}
                   key: security-salt
+          volumeMounts:
+            - name: config-template
+              mountPath: /etc/bigbluebutton-template
+            - name: props
+              mountPath: /props
+            - name: data
+              mountPath: /var/bigbluebutton
+      containers:
+        - name: bbb-web
+          # Heap: the image's JDK_JAVA_OPTIONS (-Xms384m -Xmx384m, those of bbb-web.service).
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "web") }}
           ports:
             - name: http
               containerPort: 8090
@@ -92,17 +113,15 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/bigbluebutton
-            - name: config-template
-              mountPath: /etc/bigbluebutton-template
-            - name: etc
-              mountPath: /etc/bigbluebutton
+            - name: props
+              mountPath: /etc/bigbluebutton/bbb-web.properties
+              subPath: bbb-web.properties
+              readOnly: true
             - name: client-settings
               mountPath: /usr/share/bigbluebutton/html5-client/private/config/settings.yml
               subPath: settings.yml
             - name: tmp
               mountPath: /tmp
-            - name: logs
-              mountPath: /usr/share/bbb-web/logs
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -110,12 +129,10 @@ spec:
         - name: config-template
           configMap:
             name: bbb-web-config
-        - name: etc
+        - name: props
           emptyDir: {}
         - name: client-settings
           configMap:
             name: client-settings
         - name: tmp
-          emptyDir: {}
-        - name: logs
           emptyDir: {}
