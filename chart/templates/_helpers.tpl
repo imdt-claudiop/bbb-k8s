@@ -19,10 +19,11 @@ nodeSelector:
 {{ .root.Values.officialImages.registry }}/bbb-{{ .name }}:{{ required "officialImages.tag is empty" .root.Values.officialImages.tag }}
 {{- end }}
 
-{{/* Job name keyed on the schema sha, the bootstrap script and the Postgres image: Job templates
-     are immutable. */}}
+{{/* Job name keyed on everything its template carries (the schema sha, the bootstrap script, the
+     Postgres image and the official image tag of its init containers): Job templates are
+     immutable. A new name re-runs the bootstrap, which keeps bbb_graphql when the marker matches. */}}
 {{- define "bbb.bootstrapJobName" -}}
-bbb-bootstrap-{{ printf "%s%s%s" .Values.bootstrap.schemaSha (.Files.Get "scripts/bootstrap.sh") .Values.postgres.image | sha256sum | trunc 8 }}
+bbb-bootstrap-{{ printf "%s%s%s%s" .Values.bootstrap.schemaSha (.Files.Get "scripts/bootstrap.sh") .Values.postgres.image .Values.officialImages.tag | sha256sum | trunc 8 }}
 {{- end }}
 
 {{- define "bbb.dbPasswordEnv" -}}
