@@ -10,10 +10,6 @@ officialImages:
   registry: ghcr.io/bigbluebutton/bigbluebutton
   tag: "v4.1.x-develop-c58638f"
 
-# Images still built from this repository (images/build.sh); removed once nothing uses them.
-registry: ghcr.io/imdt-claudiop/bbb-k8s
-imagePullSecret: ghcr-pull
-
 # Secrets are created outside the chart (docs/install.md).
 secrets:
   db: bbb-db          # keys: postgres-password, bbb-core-password, bbb-hasura-password,

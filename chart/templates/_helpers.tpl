@@ -14,11 +14,6 @@ nodeSelector:
   {{ .root.Values.nodeRoleLabel }}: {{ .role }}
 {{- end }}
 
-{{- define "bbb.image" -}}
-{{- if not .tag }}{{ fail (printf "%s image tag is empty: run images/build.sh %s" .name .name) }}{{ end -}}
-{{ .root.Values.registry }}/{{ .name }}:{{ .tag }}
-{{- end }}
-
 {{/* An official image: include "bbb.officialImage" (dict "root" . "name" "web") */}}
 {{- define "bbb.officialImage" -}}
 {{ .root.Values.officialImages.registry }}/bbb-{{ .name }}:{{ required "officialImages.tag is empty" .root.Values.officialImages.tag }}

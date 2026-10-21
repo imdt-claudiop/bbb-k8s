@@ -2,13 +2,13 @@
 # Create the namespace and the Secrets the chart references. Idempotent: existing Secrets are
 # kept (rotating a database password needs the bootstrap Job to run again).
 #
-# Env: GHCR_USER, GHCR_TOKEN (a token with read:packages on the bbb-k8s images).
-#      LIVEKIT_API_KEY (optional, default bbbk8s): must match values livekit.apiKey.
+# The images are the public official ones: no pull Secret.
+#
+# Env: LIVEKIT_API_KEY (optional, default bbbk8s): must match values livekit.apiKey.
 #      TLS_CERT, TLS_KEY (optional): certificate and key for the public host. Without them the
 #      *.bbb.imdt.dev wildcard is downloaded from a.bbb.imdt.dev, as bbb-docker-dev does.
 set -euo pipefail
 NS=${NS:-bbb}
-: "${GHCR_USER:?}" "${GHCR_TOKEN:?}"
 
 kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS"
 
@@ -51,9 +51,4 @@ fi
 kubectl -n "$NS" create secret tls bbb-tls --cert="$tls_dir/tls.crt" --key="$tls_dir/tls.key" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
-# The pull Secret is refreshed every run, so a rotated token only needs a re-run.
-kubectl -n "$NS" create secret docker-registry ghcr-pull \
-  --docker-server=ghcr.io --docker-username="$GHCR_USER" --docker-password="$GHCR_TOKEN" \
-  --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-
-kubectl -n "$NS" get secret bbb-db bbb-salt bbb-hasura bbb-livekit bbb-tls ghcr-pull
+kubectl -n "$NS" get secret bbb-db bbb-salt bbb-hasura bbb-livekit bbb-tls
