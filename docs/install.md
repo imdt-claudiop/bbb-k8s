@@ -188,11 +188,12 @@ client always uses `https`/`wss` on port 443 of the page's host.
 ### API-Mate
 
 The chart does not serve API-Mate. To build and sign API calls by hand, use one outside the cell,
-such as the upstream page `bbb-conf` links to, with the server and the shared secret in the URL
+such as the public one the BigBlueButton project publishes at
+https://bigbluebutton.github.io/api-mate/, with the server and the shared secret in the URL
 fragment:
 
 ```
-https://mconf.github.io/api-mate/#server=https://<publicHost>/bigbluebutton/&sharedSecret=<secret>
+https://bigbluebutton.github.io/api-mate/#server=https://<publicHost>/bigbluebutton/&sharedSecret=<secret>
 # secret:
 kubectl -n bbb get secret bbb-salt -o jsonpath='{.data.security-salt}' | base64 -d
 ```
