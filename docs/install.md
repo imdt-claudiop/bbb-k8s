@@ -9,13 +9,18 @@ playback (presentation format).
 
 ## Prerequisites
 
+- A cluster: [doks.md](doks.md) creates one on DigitalOcean, [k3s.md](k3s.md) runs everything
+  on one machine for local tests.
 - `kubectl` and `helm` (v3) pointing at the cluster.
 - A storage class named `do-block-storage-retain` (DigitalOcean Kubernetes ships it), or set
-  `postgres.storageClass` / `redis.storageClass`.
+  `postgres.storageClass`, `redis.storageClass`, `bbbData.storageClass` and
+  `webrtcRecorder.storageClass`.
 
 ### Node roles
 
-Workloads are placed by node role (spec D1). Label one node per role; roles can share a node.
+Workloads are placed by node role (spec D1). A node carries one `bbb-k8s/role` label, so label
+one node per role; to put several roles on one node, point their `*.role` values at the same
+label value (`clusters/k3s-local.yaml` does that for a single node).
 
 ```bash
 kubectl label node <node> bbb-k8s/role=storage
@@ -26,9 +31,8 @@ kubectl label node <node> bbb-k8s/role=data
 
 Postgres and Hasura run on `data`; Redis, akka-apps, graphql-actions and graphql-middleware on
 `control`; bbb-web, the front nginx, bbb-webrtc-recorder and the recording processing on
-`storage`, where the `bbb-data` and `bbb-recorder` volumes are attached; livekit-server (host network) and bbb-webrtc-sfu on
-`media`. Labels set with
-`kubectl label` are lost when the managed cluster replaces a node (upgrade, pool change):
+`storage`, where the `bbb-data` and `bbb-recorder` volumes are attached; livekit-server (host
+network) and bbb-webrtc-sfu on `media`. Labels set with `kubectl label` are lost when the managed cluster replaces a node (upgrade, pool change):
 re-apply them, or set them as node pool labels in the cloud provider.
 
 ## Images
@@ -147,7 +151,10 @@ client always uses `https`/`wss` on port 443 of the page's host.
   IPs and NodePorts stay closed from outside.
 - `publicHost` must resolve to the load balancer IP on public DNS and be covered by the
   certificate in `bbb-tls`. `scripts/public-host.sh` checks the resolution (see "Install").
-- bbb-web downloads `https://<publicHost>/default.pdf` when a meeting is created. Cilium
+- bbb-web downloads `https://<publicHost>/default.pdf` when a meeting is created, and only
+  accepts a certificate it trusts: one from a public authority, or one signed by the authority
+  in `secrets.extraCA` (a Secret with `ca.crt`, also trusted by `helm test`; [k3s.md](k3s.md)
+  uses it with a local authority). Cilium
   resolves a pod's connection to the load balancer IP inside the cluster, so the request
   reaches nginx from the bbb-web pod IP (allowed by the `bbb-web` egress rule).
 - Changing `publicHost` restarts bbb-web (meetings in progress end) and nginx, through the
@@ -234,10 +241,11 @@ media node (`livekit.config.rtc.tcp_port`, `allow_tcp_fallback`), which is open:
 all UDP blocked joined audio that way.
 
 To make UDP reachable without relying on ICE from both sides (better for strict NATs and the
-recommended production setup), someone with access to the DigitalOcean account should add an
-inbound rule for **UDP 16384-32768** (and **TCP 7881** if LiveKit's default TCP port is ever
-used) to the firewall that covers the worker droplets, or to a new firewall applied to the node
-pool's tag.
+recommended production setup), add an inbound rule for **UDP 16384-32768** (and **TCP 7881**
+if LiveKit's default TCP port is ever used) to the firewall that covers the worker droplets,
+or to a new firewall applied to the node pool's tag ([doks.md](doks.md), step 4). The lab
+cluster's account owner has since added the UDP rule; the measurement above predates it and
+was not repeated.
 
 ### NetworkPolicy and the host network
 

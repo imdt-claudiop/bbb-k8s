@@ -18,7 +18,8 @@ Current state: Postgres, Redis, the database bootstrap Job, akka-apps, the Graph
 (Hasura, graphql-actions, graphql-middleware), bbb-web and the front nginx with the html5
 client, published through a DigitalOcean LoadBalancer, audio through LiveKit, and recording
 with playback (presentation format). `helm test` checks an install through the API. See
-[docs/install.md](docs/install.md).
+[docs/install.md](docs/install.md); for the cluster itself, [docs/doks.md](docs/doks.md)
+(DigitalOcean) or [docs/k3s.md](docs/k3s.md) (one machine, local tests).
 
 ## Images
 
