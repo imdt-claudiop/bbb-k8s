@@ -1,5 +1,5 @@
 {{- /* The package's bigbluebutton.yml with the cluster wiring. Several rap scripts read this file
-       directly instead of the recording.yml override (spec PR candidate 1), so the full merged
+       directly instead of the recording.yml override, so the full merged
        file is mounted over it, and also as the override. */}}
 {{- $config := .Files.Get "files/bigbluebutton.yml" | fromYaml }}
 {{- $wiring := dict
@@ -17,7 +17,7 @@ data:
   bigbluebutton.yml: |
     {{- toYaml $config | nindent 4 }}
 ---
-# Recording processing (spec section 4): one pod, two containers - rap-starter watches the
+# Recording processing (docs/phase1.md, section 8): one pod, two containers - rap-starter watches the
 # status files bbb-web writes and enqueues jobs; the resque workers archive, process and
 # publish. Both need the two volumes of the storage node (the inotify trigger works only on the
 # same filesystem, spec D2).

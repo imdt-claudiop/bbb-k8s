@@ -63,7 +63,7 @@ spec:
                   key: api-secret
           lifecycle:
             # The recorder finalizes files on SIGINT/SIGHUP only (internal/app/app.go):
-            # a plain SIGTERM would cut recordings in progress (spec PR candidate 7).
+            # a plain SIGTERM would cut recordings in progress.
             preStop:
               exec:
                 command: ["/bin/sh", "-c", "kill -INT 1; sleep 10"]

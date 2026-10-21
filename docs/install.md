@@ -319,8 +319,7 @@ filtered.
 - **graphql-middleware** reads `/etc/bigbluebutton/bbb-graphql-middleware.yml` (a ConfigMap)
   over its packaged defaults: Service names instead of loopback, and Hasura directly on
   `hasura:8085` instead of the package's nginx load balancer on 8185. Its first hook is
-  bbb-web, which arrives in a later slice: until then every client connection is refused with
-  close code 4403.
+  bbb-web.
 - **graphql-actions** turns client mutations into Redis messages and trusts the session
   variables in the request, so only Hasura and the middleware may reach it.
 
@@ -340,11 +339,13 @@ graphql-server and shared-notes-server images.
   passwords and grants. The marker is written last.
 - `hasura_app` and `blocknote_app` are created when missing and never dropped;
   `blocknote_schema.sql` is loaded only when `blocknote_app` is created.
-- The Job name is derived from the schema sha, the script and the Postgres image, so an
-  upgrade that changes any of them creates a new Job instead of patching an immutable one.
+- The Job name is derived from the schema sha, the script, the Postgres image and the official
+  image tag, so an upgrade that changes any of them creates a new Job instead of patching an
+  immutable one.
 - akka-apps carries the schema sha as a pod annotation: a new schema recreates akka-apps in the
   same upgrade, after the database. **A schema change ends every meeting in progress**: do it in
-  a maintenance window. A new image tag with the same schema does not re-run the bootstrap.
+  a maintenance window. A new image tag with the same schema re-runs the bootstrap, which keeps
+  `bbb_graphql` (`already at schema-sha:...: keeping it`).
 
 ## Checking an install
 
@@ -384,8 +385,8 @@ Then confirm in the DigitalOcean panel or with `doctl compute volume list` that 
 
 ## Known limitations of this slice
 
-- akka-apps `/healthz` answers 503 until bbb-web and the GraphQL middleware exist (later
-  slices); the probes are TCP only for that reason.
+- akka-apps `/healthz` answers 503 in its first minute and whenever bbb-web is away; the
+  probes are TCP only for that reason (`chart/templates/akka-apps.yaml`).
 - One replica per service; restarting akka-apps ends the meetings it holds (spec L1, L2).
 - Camera and screen sharing use the same LiveKit path but are not part of the validated set.
 - The middleware waits for its Redis subscription at start and exits when it loses it (by
