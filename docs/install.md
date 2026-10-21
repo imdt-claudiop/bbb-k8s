@@ -187,25 +187,18 @@ client always uses `https`/`wss` on port 443 of the page's host.
 
 ### API-Mate
 
-The front nginx also serves **API-Mate** at `https://<publicHost>/api-mate/`, a small static page
-to build and sign BigBlueButton API calls by hand. It is the upstream
-[mconf/api-mate](https://github.com/mconf/api-mate) bundle (gh-pages, pinned to commit
-`d058fb77e11113c39ae84b2e9c6831a794cf9bbe`), downloaded by an init container of the front nginx at pod
-start and checked against its sha256 (`nginx.apiMate` in values; while it is enabled, the
-`bbb-nginx-api-mate` NetworkPolicy lets that pod reach the internet on 443); it is not a BBB package
-(`bbb-conf` only links to `mconf.github.io/api-mate`). Its serving fragment uses a trailing-slash
-`location /api-mate/` + `alias` on purpose, to avoid the nginx off-by-slash alias traversal.
-
-Build a ready-to-use link by filling the server and the shared secret in the URL fragment:
+The chart does not serve API-Mate. To build and sign API calls by hand, use one outside the cell,
+such as the upstream page `bbb-conf` links to, with the server and the shared secret in the URL
+fragment:
 
 ```
-https://<publicHost>/api-mate/#server=https://<publicHost>/bigbluebutton/&sharedSecret=<secret>
+https://mconf.github.io/api-mate/#server=https://<publicHost>/bigbluebutton/&sharedSecret=<secret>
 # secret:
 kubectl -n bbb get secret bbb-salt -o jsonpath='{.data.security-salt}' | base64 -d
 ```
 
 The shared secret stays in the browser URL **fragment** (after `#`), so it is never sent to the
-server; api-mate reads it client-side to sign the calls.
+server; API-Mate reads it client-side to sign the calls.
 
 ## Media: LiveKit
 

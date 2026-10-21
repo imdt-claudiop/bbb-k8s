@@ -89,8 +89,9 @@ pulled was ready in about two minutes).
 
 ## 5. Join a meeting
 
-Open `https://bbb.10-111-12-105.sslip.io/api-mate/` (install.md, "API-Mate"), create a meeting
-and join it. The browser does not know the local authority: import `ca.crt` as a trusted
+Create a meeting and join it with an API-Mate outside the cell (install.md, "API-Mate"), with
+`server=https://bbb.10-111-12-105.sslip.io/bigbluebutton/`; that path was not exercised here
+(the validation signed the API calls with a script). The browser does not know the local authority: import `ca.crt` as a trusted
 authority in the browser or the operating system, or accept the certificate warning. The
 validation here ran its browsers with certificate errors ignored; importing the authority into
 a browser was not exercised.
