@@ -1,0 +1,29 @@
+# Values for a single-node k3s on one machine, for local tests (docs/k3s.md). Replace
+# 10.111.12.105 with the machine's IP everywhere below.
+# sslip.io answers <anything>.<IP with dashes>.sslip.io with that IP.
+publicHost: bbb.10-111-12-105.sslip.io
+livekit:
+  role: all
+  nodeIP: 10.111.12.105
+  config:
+    rtc:
+      # The node is reached directly: no STUN mapping. TCP fallback on 7881, because k3s's
+      # ServiceLB already binds 443 of the node for the front nginx.
+      use_external_ip: false
+      tcp_port: 7881
+# One node carries every role: label it bbb-k8s/role=all.
+postgres: { role: all, storageClass: local-path }
+redis: { role: all, storageClass: local-path }
+akkaApps: { role: all }
+hasura: { role: all }
+graphqlActions: { role: all }
+graphqlMiddleware: { role: all }
+sharedNotes: { role: all }
+webhooks: { role: all }
+staticApps: { role: all }
+bbbData: { role: all, storageClass: local-path }
+webrtcSfu: { role: all }
+webrtcRecorder: { storageClass: local-path }
+# The local CA that signed the TLS certificate (docs/k3s.md), trusted by bbb-web and helm test.
+secrets:
+  extraCA: bbb-local-ca
