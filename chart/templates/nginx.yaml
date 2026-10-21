@@ -37,9 +37,28 @@ metadata:
     {{- include "bbb.labels" . | nindent 4 }}
 data:
   # The site of build/packages-template/bbb-html5/bigbluebutton.nginx, with TLS terminated here
-  # as a bbb-install server does. The package fragments live in /usr/share/bigbluebutton/nginx.
-  bigbluebutton.conf: |
+  # as a bbb-install server does; mounted over the image's sites-available/bigbluebutton. The
+  # location files live in /usr/share/bigbluebutton/nginx.
+  bigbluebutton: |
     {{- include "bbb.nginxSite" . | nindent 4 }}
+  # Replaces the image's Hasura balancer site (127.0.0.1:8185 in front of 127.0.0.1:8085): the
+  # middleware reaches the hasura Service directly, and its "upstream hasura" would capture the
+  # http://hasura:8085 of graphql.nginx.
+  hasura-loadbalancer.conf: |
+    # Not used here: the hasura Service is the balancer.
+---
+# The location files of the official bbb-nginx image with this chart's Service names
+# (chart/files/nginx, written by scripts/sync-upstream.sh), mounted over the image's copies,
+# which point at 127.0.0.1. Includes webhooks.nginx, which the image does not ship, and
+# api-mate.nginx.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bbb-nginx-locations
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+data:
+  {{- (.Files.Glob "files/nginx/*.nginx").AsConfig | nindent 2 }}
 ---
 apiVersion: v1
 kind: Service
@@ -86,36 +105,45 @@ spec:
         {{- include "bbb.labels" . | nindent 8 }}
         {{- include "bbb.selector" "bbb-nginx" | nindent 8 }}
       annotations:
-        # nginx reads its site only at start: restart it when the site changes (e.g. publicHost).
-        bbb-k8s/site-sha: {{ include "bbb.nginxSite" . | sha256sum | trunc 16 | quote }}
+        # nginx reads its site and location files only at start: restart it when they change.
+        bbb-k8s/site-sha: {{ printf "%s%s" (include "bbb.nginxSite" .) (.Files.Glob "files/nginx/*.nginx").AsConfig | sha256sum | trunc 16 | quote }}
     spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
-      imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
+      # The bigbluebutton user: it reads the presentations, recordings and dashboard reports on
+      # bbb-data, as before (the official image's default user is nginx, 101).
       securityContext:
         runAsUser: 998
         runAsGroup: 998
         fsGroup: 998
+      {{- if .Values.nginx.apiMate.enabled }}
       initContainers:
-        # The learning dashboard app lives next to the per-meeting data bbb-web writes in
-        # /var/bigbluebutton/learning-dashboard (spec section 4), and the presentation player is
-        # installed by its package in /var/bigbluebutton/playback: copy both from this image.
-        - name: copy-dashboard
-          image: {{ include "bbb.image" (dict "root" . "name" "nginx" "tag" .Values.nginx.tag) }}
+        # API-Mate (not a BigBlueButton package): the pinned commit of mconf/api-mate, checked
+        # against its sha256, served at /api-mate/ (api-mate.nginx).
+        - name: api-mate
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "nginx") }}
           command:
             - sh
             - -c
             - |
-              mkdir -p /var/bigbluebutton/learning-dashboard /var/bigbluebutton/playback/presentation/2.3
-              cp -r /opt/learning-dashboard/. /var/bigbluebutton/learning-dashboard/
-              rm -rf /var/bigbluebutton/playback/presentation/2.3/*
-              cp -r /opt/playback/presentation/2.3/. /var/bigbluebutton/playback/presentation/2.3/
+              set -e
+              curl -fsSL -o /tmp/api-mate.tgz "https://codeload.github.com/mconf/api-mate/tar.gz/$COMMIT"
+              echo "$SHA256  /tmp/api-mate.tgz" | sha256sum -c -
+              tar -xzf /tmp/api-mate.tgz -C /usr/share/api-mate --strip-components 1
+              rm -f /tmp/api-mate.tgz /usr/share/api-mate/.gitignore
+          env:
+            - name: COMMIT
+              value: {{ .Values.nginx.apiMate.commit | quote }}
+            - name: SHA256
+              value: {{ .Values.nginx.apiMate.sha256 | quote }}
           volumeMounts:
-            - name: data
-              mountPath: /var/bigbluebutton
+            - name: api-mate
+              mountPath: /usr/share/api-mate
+            - name: tmp
+              mountPath: /tmp
+      {{- end }}
       containers:
         - name: nginx
-          image: {{ include "bbb.image" (dict "root" . "name" "nginx" "tag" .Values.nginx.tag) }}
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "nginx") }}
           ports:
             - name: https
               containerPort: 8443
@@ -137,8 +165,19 @@ spec:
               mountPath: /var/bigbluebutton
               readOnly: true
             - name: site
-              mountPath: /etc/nginx/conf.d/bigbluebutton.conf
-              subPath: bigbluebutton.conf
+              mountPath: /etc/nginx/sites-available/bigbluebutton
+              subPath: bigbluebutton
+            - name: site
+              mountPath: /etc/nginx/sites-available/hasura-loadbalancer.conf
+              subPath: hasura-loadbalancer.conf
+            - name: locations
+              mountPath: /usr/share/bigbluebutton/nginx
+              readOnly: true
+            {{- if .Values.nginx.apiMate.enabled }}
+            - name: api-mate
+              mountPath: /usr/share/api-mate
+              readOnly: true
+            {{- end }}
             - name: tls
               mountPath: /etc/nginx/tls
               readOnly: true
@@ -153,6 +192,13 @@ spec:
         - name: site
           configMap:
             name: bbb-nginx-config
+        - name: locations
+          configMap:
+            name: bbb-nginx-locations
+        {{- if .Values.nginx.apiMate.enabled }}
+        - name: api-mate
+          emptyDir: {}
+        {{- end }}
         - name: tls
           secret:
             secretName: {{ .Values.nginx.tlsSecret }}

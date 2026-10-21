@@ -1,0 +1,56 @@
+# The static web apps of the official images, each an nginx on 8080 that the front nginx proxies to
+# by these Service names (the location files bbb-html5.nginx, learning-dashboard.nginx and
+# playback.nginx): the html5 client, the learning dashboard and the presentation player.
+# Stateless; the dashboard reports and the published recordings stay on bbb-data, served by the
+# front nginx itself.
+{{- range $app := list "html5-client" "learning-dashboard" "playback" }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $app }}
+  labels:
+    {{- include "bbb.labels" $ | nindent 4 }}
+spec:
+  selector:
+    {{- include "bbb.selector" $app | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $app }}
+  labels:
+    {{- include "bbb.labels" $ | nindent 4 }}
+    {{- include "bbb.selector" $app | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "bbb.selector" $app | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bbb.labels" $ | nindent 8 }}
+        {{- include "bbb.selector" $app | nindent 8 }}
+    spec:
+      {{- include "bbb.nodeSelector" (dict "root" $ "role" $.Values.staticApps.role) | nindent 6 }}
+      containers:
+        - name: {{ $app }}
+          image: {{ include "bbb.officialImage" (dict "root" $ "name" $app) }}
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            periodSeconds: 20
+          resources:
+            {{- toYaml $.Values.staticApps.resources | nindent 12 }}
+{{- end }}

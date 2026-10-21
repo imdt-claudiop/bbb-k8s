@@ -110,7 +110,7 @@ graphqlMiddleware:
     requests: { cpu: 250m, memory: 256Mi }
     limits: { cpu: 500m, memory: 512Mi }
 
-# --- Front: bbb-web, nginx (html5 client, learning dashboard) -------------------------------
+# --- Front: bbb-web, nginx and the static apps (html5 client, learning dashboard, player) ----
 # Host every URL of the client and the API derives from (bigbluebutton.web.serverURL) and the
 # name the front nginx answers to; must be covered by the TLS Secret. Set per cluster (e.g.
 # clusters/doks-hackweek.yaml): <prefix>-ip-<LB IP with dashes>.bbb.imdt.dev, which public DNS
@@ -130,7 +130,6 @@ bbbWeb:
     limits: { cpu: "2", memory: 3Gi }
 
 nginx:
-  tag: "4.1-66b0bb09-20261020202245"
   tlsSecret: bbb-tls  # kubernetes.io/tls, created by scripts/create-secrets.sh
   # Public entry point: a DigitalOcean LoadBalancer in TCP mode in front of this nginx, which
   # terminates TLS itself (docs/install.md, "Public entry point").
@@ -146,6 +145,20 @@ nginx:
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: "1", memory: 512Mi }
+  # API-Mate at /api-mate/ (not a BigBlueButton package): the gh-pages commit of mconf/api-mate,
+  # downloaded at pod start and checked against this sha256. Enabling it lets the front nginx pod
+  # reach the internet on 443 (NetworkPolicy bbb-nginx-api-mate).
+  apiMate:
+    enabled: true
+    commit: d058fb77e11113c39ae84b2e9c6831a794cf9bbe
+    sha256: 39e6812fa6d41818fd759f621cc89826f73c3f63214a7859a3ed841eb600206f
+
+# The html5 client, learning dashboard and presentation player images (static-apps.yaml).
+staticApps:
+  role: control
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
 
 # --- Media: LiveKit, bbb-webrtc-sfu (LiveKit module only), bbb-webrtc-recorder ----------------
 livekit:
