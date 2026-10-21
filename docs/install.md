@@ -257,6 +257,22 @@ filtered.
   same upgrade, after the database. **A schema change ends every meeting in progress**: do it in
   a maintenance window. A bootstrap image bump with the same schema does not restart akka-apps.
 
+## Checking an install
+
+```bash
+helm test bbb -n bbb
+kubectl -n bbb logs api-smoke
+```
+
+The `api-smoke` test Pod (`chart/templates/tests/api-smoke.yaml`, script in
+`chart/scripts/api-smoke.sh`) goes through the public host the way an integration does: the
+API answers, then `create`, `join`, `getMeetingInfo`, `getRecordings` and `end` of a meeting of
+its own (`helm-test-<timestamp>`, signed with the shared secret), and finally the html5 client
+and the LiveKit signaling behind the front nginx answer 2xx. Each step prints `ok` or `FAIL`.
+It never touches other meetings. The pod stays after every run (Completed or Error) until the
+next `helm test` replaces it, so its output can always be read with
+`kubectl -n bbb logs api-smoke`. Its NetworkPolicy only lets it reach the front nginx.
+
 ## Uninstall and cleanup
 
 ```bash

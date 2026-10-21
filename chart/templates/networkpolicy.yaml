@@ -159,6 +159,7 @@ spec:
         - ipBlock:
             cidr: 0.0.0.0/0
         {{- include "bbb.peer" "bbb-web" | nindent 8 }}
+        {{- include "bbb.peer" "api-smoke" | nindent 8 }}
       ports:
         - { protocol: TCP, port: 8443 }
         - { protocol: TCP, port: 8080 }
@@ -198,6 +199,9 @@ spec:
 {{- include "bbb.netpol" (dict "root" . "name" "bbb-webrtc-sfu"
       "ingress" (list (list 3008 (list "bbb-nginx")))
       "egress" (list (list 6379 (list "redis")))) }}
+{{- /* helm test (templates/tests): the API through the public host, like a client. */}}
+{{- include "bbb.netpol" (dict "root" . "name" "api-smoke"
+      "egress" (list (list 8443 (list "bbb-nginx")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "bbb-webrtc-recorder"
       "egress" (list (list 6379 (list "redis")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "recording"
