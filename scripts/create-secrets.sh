@@ -4,11 +4,29 @@
 #
 # The images are the public official ones: no pull Secret.
 #
-# Env: LIVEKIT_API_KEY (optional, default bbbk8s): must match values livekit.apiKey.
-#      TLS_CERT, TLS_KEY (optional): certificate and key for the public host. Without them the
-#      *.bbb.imdt.dev wildcard is downloaded from a.bbb.imdt.dev, as bbb-docker-dev does.
+# Env: TLS_CERT, TLS_KEY: certificate (full chain) and key for the public host, PEM files. The
+#      TLS Secret is refreshed from them on every run (certificates expire).
+#      TLS_SOURCE=imdt-test: lab shortcut instead of TLS_CERT/TLS_KEY. Downloads iMDT's
+#      *.bbb.imdt.dev wildcard from a.bbb.imdt.dev, as bbb-docker-dev does. Its private key is
+#      handed to everyone who installs this way: lab only, never production.
+#      LIVEKIT_API_KEY (optional, default bbbk8s): must match values livekit.apiKey.
 set -euo pipefail
 NS=${NS:-bbb}
+
+# Check the certificate source before changing anything.
+if [ -n "${TLS_CERT:-}" ] && [ -n "${TLS_KEY:-}" ]; then
+  tls_source=files
+elif [ "${TLS_SOURCE:-}" = imdt-test ]; then
+  tls_source=imdt-test
+else
+  cat >&2 <<'EOF'
+no certificate for the public host. Either:
+  TLS_CERT=<fullchain.pem> TLS_KEY=<privkey.pem>   the certificate of your public host (production)
+  TLS_SOURCE=imdt-test                             lab only: iMDT's *.bbb.imdt.dev wildcard, whose
+                                                   private key every such installer receives
+EOF
+  exit 1
+fi
 
 kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS"
 
@@ -42,7 +60,7 @@ fi
 
 # TLS for the BBB nginx, refreshed every run (certificates expire).
 tls_dir=$(mktemp -d); trap 'rm -rf "$tls_dir"' EXIT
-if [ -n "${TLS_CERT:-}" ] && [ -n "${TLS_KEY:-}" ]; then
+if [ "$tls_source" = files ]; then
   cp "$TLS_CERT" "$tls_dir/tls.crt"; cp "$TLS_KEY" "$tls_dir/tls.key"
 else
   curl -fsS -o "$tls_dir/tls.crt" http://a.bbb.imdt.dev/certs_new/fullchain.pem
