@@ -51,26 +51,73 @@ BBB_REPO=/path/to/bigbluebutton scripts/sync-upstream.sh <commit>
 
 ## Install
 
-The public host is derived from the IP of the LoadBalancer, which only exists once the chart
-created it, so the first install has two steps:
+Two paths. Production: your own name and certificate, installed in one step. Lab: iMDT's test
+domain, whose resolver derives the name from the load balancer IP. Both run `create-secrets.sh`
+first (namespace `bbb` and the Secrets).
+
+### Production: your own domain and certificate
+
+Choose the public name first (e.g. `bbb.example.org`) and have a certificate for it (full chain
+and key, PEM). The chart does not need the name to resolve to install: bbb-web needs it on the
+first `create` (it downloads `https://<publicHost>/default.pdf`), and so does `helm test`.
 
 ```bash
-scripts/create-secrets.sh   # namespace bbb + Secrets
-# 1. any host to get the LoadBalancer created
-helm upgrade --install bbb chart -n bbb --reset-values --set publicHost=pending.bbb.imdt.dev
-scripts/public-host.sh            # waits for the IP, checks public DNS, prints publicHost=...
-# 2. write that host in clusters/<cluster>.yaml, then from now on:
-helm upgrade --install bbb chart -n bbb --reset-values -f clusters/<cluster>.yaml
+TLS_CERT=fullchain.pem TLS_KEY=privkey.pem scripts/create-secrets.sh   # namespace bbb + Secrets
+helm upgrade --install bbb chart -n bbb --reset-values -f clusters/<cluster>.yaml \
+  --set publicHost=bbb.example.org        # or publicHost in clusters/<cluster>.yaml
+PUBLIC_HOST=bbb.example.org scripts/public-host.sh   # prints the A record to create, waits for it
 kubectl -n bbb get pods -w
+helm test bbb -n bbb                      # once public-host.sh printed publicHost=...
 ```
+
+`public-host.sh` waits for the IP of the load balancer and prints the record to create,
+`bbb.example.org -> <IP>`, then waits until public DNS answers it. Create the record right away,
+before anything else asks for the name: resolvers cache a missing name for the negative TTL of
+the zone. Instead of a manual record, [external-dns](https://github.com/kubernetes-sigs/external-dns)
+can publish it from an annotation on the Service, in `clusters/<cluster>.yaml` (Helm merges it
+with the provider annotations of `values.yaml`):
+
+```yaml
+nginx:
+  service:
+    annotations:
+      external-dns.alpha.kubernetes.io/hostname: bbb.example.org
+```
+
+`public-host.sh` asks `1.1.1.1` by default; `DNS_SERVER=` uses the system resolver instead, for
+networks that block outbound DNS. A new certificate is a re-run of `create-secrets.sh` with the
+new files.
+
+### Lab: iMDT's test domain
+
+For iMDT's own test clusters only. `bbb.imdt.dev` has a resolver that answers
+`<prefix>-ip-<IP with dashes>.bbb.imdt.dev` with that IP, and iMDT publishes a `*.bbb.imdt.dev`
+wildcard certificate with its private key, so whoever installs this way shares that key: never
+use it for production. The name depends on the IP, which only exists once the chart created the
+load balancer, so the install has two steps:
+
+```bash
+TLS_SOURCE=imdt-test scripts/create-secrets.sh   # downloads the wildcard from a.bbb.imdt.dev
+# 1. any name, to get the load balancer created
+helm upgrade --install bbb chart -n bbb --reset-values -f clusters/<cluster>.yaml \
+  --set publicHost=pending.invalid
+IP_DOMAIN=bbb.imdt.dev scripts/public-host.sh    # prints publicHost=bbbk8s-ip-<IP>.bbb.imdt.dev
+# 2. write that name as publicHost in clusters/<cluster>.yaml, then from now on:
+helm upgrade --install bbb chart -n bbb --reset-values -f clusters/<cluster>.yaml
+```
+
+`PREFIX` (default `bbbk8s`) sets the label before `-ip-`.
+
+### Both paths
 
 `publicHost` has no default: the chart refuses to render without it.
 
 `create-secrets.sh` generates the database passwords (`bbb-db`), the shared secret
 (`bbb-salt`) and the Hasura admin secret (`bbb-hasura`) once and keeps them on later runs; the
-TLS Secret (`bbb-tls`) is refreshed every run. The images are public: there is no pull Secret. Without
-`TLS_CERT`/`TLS_KEY` the TLS Secret holds the `*.bbb.imdt.dev` wildcard, downloaded from
-`a.bbb.imdt.dev` as bbb-docker-dev does (over plain HTTP, as there). Nothing secret lives in this repository.
+TLS Secret (`bbb-tls`, a plain `kubernetes.io/tls`) is refreshed every run, from `TLS_CERT`/
+`TLS_KEY` or, with `TLS_SOURCE=imdt-test`, from iMDT's lab wildcard. Without either it stops
+before changing anything. The images are public: there is no pull Secret. Nothing secret lives
+in this repository.
 
 Expected order: `postgres-0` and `redis-0` start, the `bbb-bootstrap-<hash>` Job creates the
 roles and databases, and `akka-apps` stays in `Init` (container `wait-bootstrap`) until
@@ -98,17 +145,16 @@ client always uses `https`/`wss` on port 443 of the page's host.
 - `externalTrafficPolicy: Local` keeps the client IP, so the nginx access log shows real
   clients and the NetworkPolicy `bbb-nginx-public` admits them with an `ipBlock`. The node
   IPs and NodePorts stay closed from outside.
-- `<prefix>-ip-<IP with dashes>.bbb.imdt.dev` resolves to that IP on public DNS, and the
-  `*.bbb.imdt.dev` wildcard covers it. `scripts/public-host.sh` prints the name and checks the
-  resolution.
+- `publicHost` must resolve to the load balancer IP on public DNS and be covered by the
+  certificate in `bbb-tls`. `scripts/public-host.sh` checks the resolution (see "Install").
 - bbb-web downloads `https://<publicHost>/default.pdf` when a meeting is created. Cilium
   resolves a pod's connection to the load balancer IP inside the cluster, so the request
   reaches nginx from the bbb-web pod IP (allowed by the `bbb-web` egress rule).
 - Changing `publicHost` restarts bbb-web (meetings in progress end) and nginx, through the
   `properties-sha` / `site-sha` pod annotations.
 - Deleting the release or the namespace deletes the load balancer; a new install gets a new
-  IP and therefore a new host (a DigitalOcean reserved IP would keep it, but needs an API
-  token).
+  IP: update the A record of your name (with the lab domain, the name itself changes). A
+  DigitalOcean reserved IP would keep it, but needs an API token.
 
 ## How bbb-web and the front nginx are wired
 

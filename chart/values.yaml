@@ -108,9 +108,9 @@ graphqlMiddleware:
 
 # --- Front: bbb-web, nginx and the static apps (html5 client, learning dashboard, player) ----
 # Host every URL of the client and the API derives from (bigbluebutton.web.serverURL) and the
-# name the front nginx answers to; must be covered by the TLS Secret. Set per cluster (e.g.
-# clusters/doks-hackweek.yaml): <prefix>-ip-<LB IP with dashes>.bbb.imdt.dev, which public DNS
-# resolves to the LoadBalancer IP (scripts/public-host.sh). No default on purpose.
+# name the front nginx answers to; must be covered by the TLS Secret and resolve to the
+# LoadBalancer IP on public DNS (scripts/public-host.sh checks it). Set per cluster, e.g. in
+# clusters/<cluster>.yaml (docs/install.md "Install"). No default on purpose.
 publicHost: ""
 
 bbbData:
