@@ -37,7 +37,7 @@ public:
     bbbServerVersion: HTML5_FULL_BBB_VERSION
     displayBbbServerVersion: true
     copyright: '©2026 BigBlueButton Inc.'
-    html5ClientBuild: 20261021T080940
+    html5ClientBuild: 20261021T153107
     helpLink: https://bigbluebutton.org/html5/
     delayForUnmountOfSharedNote: 120000
     bbbTabletApp:

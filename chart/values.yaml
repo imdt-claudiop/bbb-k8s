@@ -2,13 +2,13 @@
 # from. chart/files/{settings.yml,bigbluebutton.yml,livekit.yaml,nginx/} and bootstrap.schemaSha
 # come from the same commit (scripts/sync-upstream.sh writes them all).
 bbb:
-  sourceSha: "c58638fde5c7fa9ec9b855dc9ba8b73a80054814"
+  sourceSha: "5b80a5ba64442b43246e4708cecd751b905d91a4"
 
 # The official images (docker/README.md of the monorepo): <registry>/bbb-<target>:<tag>. The tag
 # is the immutable per-commit one CI publishes (<branch>-<sha7>), never the moving branch tag.
 officialImages:
   registry: ghcr.io/bigbluebutton/bigbluebutton
-  tag: "v4.1.x-develop-c58638f"
+  tag: "v4.1.x-develop-5b80a5b"
 
 # Secrets are created outside the chart (docs/install.md).
 secrets:
