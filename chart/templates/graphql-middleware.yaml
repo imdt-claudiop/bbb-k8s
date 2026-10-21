@@ -1,3 +1,19 @@
+{{- define "bbb.gqlMiddlewareConf" -}}
+server:
+  listen_host: 0.0.0.0
+  listen_port: 8378
+redis:
+  host: redis
+  port: 6379
+hasura:
+  url: ws://hasura:8085/v1/graphql
+graphql-actions:
+  url: http://gql-actions:8093
+auth_hook:
+  url: http://bbb-web:8090/bigbluebutton/connection/checkGraphqlAuthorization
+session_vars_hook:
+  url: http://akka-apps:8901/userInfo
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -8,20 +24,7 @@ data:
   # Override merged over the packaged config.yml (bbb-graphql-middleware/config/Config.go);
   # the middleware reads no environment variables for these.
   bbb-graphql-middleware.yml: |
-    server:
-      listen_host: 0.0.0.0
-      listen_port: 8378
-    redis:
-      host: redis
-      port: 6379
-    hasura:
-      url: ws://hasura:8085/v1/graphql
-    graphql-actions:
-      url: http://gql-actions:8093
-    auth_hook:
-      url: http://bbb-web:8090/bigbluebutton/connection/checkGraphqlAuthorization
-    session_vars_hook:
-      url: http://akka-apps:8901/userInfo
+    {{- include "bbb.gqlMiddlewareConf" . | nindent 4 }}
 ---
 apiVersion: v1
 kind: Service
@@ -57,14 +60,14 @@ spec:
       labels:
         {{- include "bbb.labels" . | nindent 8 }}
         {{- include "bbb.selector" "gql-middleware" | nindent 8 }}
+      annotations:
+        # Reads its config file once at start: roll the pod when the config changes.
+        bbb-k8s/config-sha: {{ include "bbb.gqlMiddlewareConf" . | sha256sum | trunc 16 | quote }}
     spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.graphqlMiddleware.role) | nindent 6 }}
-      initContainers:
-        # The middleware's Redis listener dereferences a nil message whenever a receive fails
-        # (internal/websrv/rediscli.go), so a start before Redis answers ends in a panic and a
-        # crash loop. Start it only once Redis replies. A later Redis restart still crashes it
-        # until Redis is back (upstream fix pending; see docs/install.md).
-        {{- include "bbb.waitRedis" . | nindent 8 }}
+      # No wait for Redis: the middleware retries its subscription itself and keeps its port
+      # closed until subscribed (bbb-graphql-middleware internal/websrv/rediscli.go,
+      # WaitForRedisSubscription).
       containers:
         - name: gql-middleware
           image: {{ include "bbb.officialImage" (dict "root" . "name" "graphql-middleware") }}

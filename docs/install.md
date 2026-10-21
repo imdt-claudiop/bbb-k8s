@@ -388,8 +388,7 @@ Then confirm in the DigitalOcean panel or with `doctl compute volume list` that 
   probes are TCP only for that reason (`chart/templates/akka-apps.yaml`).
 - One replica per service; restarting akka-apps ends the meetings it holds (spec L1, L2).
 - Camera and screen sharing use the same LiveKit path but are not part of the validated set.
-- The middleware waits for its Redis subscription at start and exits when it loses it (by
-  design upstream), so a Redis restart restarts the middleware and drops the clients connected
-  through it; they reconnect.
-- Changing the middleware ConfigMap does not restart the middleware: restart it
-  (`kubectl -n bbb rollout restart deploy/gql-middleware`).
+- The middleware waits for its Redis subscription at start by itself (its port stays closed
+  until then) and exits when it loses it (by design upstream), so a Redis restart restarts the
+  middleware and drops the clients connected through it; they reconnect. A change to its
+  ConfigMap restarts it on the next upgrade (`bbb-k8s/config-sha`).
