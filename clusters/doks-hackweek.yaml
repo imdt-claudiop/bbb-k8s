@@ -1,7 +1,7 @@
 # Values of the DOKS hackweek cluster (NYC1). Non-secret; written from scripts/public-host.sh
 # after the LoadBalancer of svc/bbb-nginx got its IP. A reinstall that recreates the
 # LoadBalancer gets a new IP: run the script again and update this line.
-publicHost: bbbk8s-ip-129-212-196-56.bbb.imdt.dev
+publicHost: bbbk8s-ip-165-245-153-14.bbb.imdt.dev
 livekit:
   # ExternalIP of the node labelled bbb-k8s/role=media (temp-hackweek-3b3nqq). A replaced node
   # gets a new IP: update it.
