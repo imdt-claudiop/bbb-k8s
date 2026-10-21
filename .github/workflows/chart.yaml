@@ -1,5 +1,6 @@
 # Static checks of the chart and the shell scripts: the chart must lint and render to manifests
-# the Kubernetes API accepts (the Cilium CRDs included, through the CRDs catalog). Nothing here
+# the Kubernetes API accepts (the Cilium CRDs included, through the CRDs catalog), with the values
+# of both clusters: DOKS (Cilium policies) and k3s-local (plain policies, extra CA). Nothing here
 # needs a cluster; `helm test` (docs/install.md "Checking an install") covers a running one.
 name: chart
 on:
@@ -17,18 +18,22 @@ jobs:
         with:
           version: v4.3.1
       - name: helm lint
-        run: helm lint --strict chart -n bbb -f clusters/doks-hackweek.yaml
+        run: |
+          for c in doks-hackweek k3s-local; do
+            helm lint --strict chart -n bbb -f "clusters/$c.yaml"
+          done
       - name: render
         run: |
           mkdir -p out
-          helm template bbb chart -n bbb -f clusters/doks-hackweek.yaml \
-            --api-versions cilium.io/v2/CiliumNetworkPolicy > out/default.yaml
+          for c in doks-hackweek k3s-local; do
+            helm template bbb chart -n bbb -f "clusters/$c.yaml" > "out/$c.yaml"
+          done
       - name: kubeconform
         run: |
           docker run --rm -v "$PWD/out:/out:ro" ghcr.io/yannh/kubeconform:v0.7.0 -strict -summary \
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            /out/default.yaml
+            /out/doks-hackweek.yaml /out/k3s-local.yaml
       - name: shellcheck
         run: |
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.10.0 \
