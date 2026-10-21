@@ -119,30 +119,6 @@ spec:
 {{- include "bbb.netpol" (dict "root" $ "name" $app
       "ingress" (list (list 8080 (list "bbb-nginx")))) }}
 {{- end }}
-{{- if .Values.nginx.apiMate.enabled }}
----
-# The API-Mate init container of the front nginx downloads the pinned tarball from GitHub
-# (codeload.github.com). HTTPS to the internet only; the private, CGNAT and link-local ranges
-# stay closed.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: bbb-nginx-api-mate
-  labels:
-    {{- include "bbb.labels" . | nindent 4 }}
-spec:
-  podSelector:
-    matchLabels:
-      {{- include "bbb.selector" "bbb-nginx" | nindent 6 }}
-  policyTypes: ["Egress"]
-  egress:
-    - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16]
-      ports:
-        - { protocol: TCP, port: 443 }
-{{- end }}
 {{- include "bbb.netpol" (dict "root" . "name" "bbb-webhooks"
       "ingress" (list (list 3005 (list "bbb-nginx")))
       "egress" (list (list 6379 (list "redis")))) }}

@@ -146,13 +146,6 @@ nginx:
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: "1", memory: 512Mi }
-  # API-Mate at /api-mate/ (not a BigBlueButton package): the gh-pages commit of mconf/api-mate,
-  # downloaded at pod start and checked against this sha256. Enabling it lets the front nginx pod
-  # reach the internet on 443 (NetworkPolicy bbb-nginx-api-mate).
-  apiMate:
-    enabled: true
-    commit: d058fb77e11113c39ae84b2e9c6831a794cf9bbe
-    sha256: 39e6812fa6d41818fd759f621cc89826f73c3f63214a7859a3ed841eb600206f
 
 # The html5 client, learning dashboard and presentation player images (static-apps.yaml).
 staticApps:

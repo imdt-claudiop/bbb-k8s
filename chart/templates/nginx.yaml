@@ -49,7 +49,7 @@ data:
 ---
 # The location files of the official bbb-nginx image with this chart's Service names
 # (chart/files/nginx, written by scripts/sync-upstream.sh), mounted over the image's copies,
-# which point at 127.0.0.1, plus this chart's api-mate.nginx.
+# which point at 127.0.0.1.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -114,32 +114,6 @@ spec:
         runAsUser: 998
         runAsGroup: 998
         fsGroup: 998
-      {{- if .Values.nginx.apiMate.enabled }}
-      initContainers:
-        # API-Mate (not a BigBlueButton package): the pinned commit of mconf/api-mate, checked
-        # against its sha256, served at /api-mate/ (api-mate.nginx).
-        - name: api-mate
-          image: {{ include "bbb.officialImage" (dict "root" . "name" "nginx") }}
-          command:
-            - sh
-            - -c
-            - |
-              set -e
-              curl -fsSL -o /tmp/api-mate.tgz "https://codeload.github.com/mconf/api-mate/tar.gz/$COMMIT"
-              echo "$SHA256  /tmp/api-mate.tgz" | sha256sum -c -
-              tar -xzf /tmp/api-mate.tgz -C /usr/share/api-mate --strip-components 1
-              rm -f /tmp/api-mate.tgz /usr/share/api-mate/.gitignore
-          env:
-            - name: COMMIT
-              value: {{ .Values.nginx.apiMate.commit | quote }}
-            - name: SHA256
-              value: {{ .Values.nginx.apiMate.sha256 | quote }}
-          volumeMounts:
-            - name: api-mate
-              mountPath: /usr/share/api-mate
-            - name: tmp
-              mountPath: /tmp
-      {{- end }}
       containers:
         - name: nginx
           image: {{ include "bbb.officialImage" (dict "root" . "name" "nginx") }}
@@ -172,11 +146,6 @@ spec:
             - name: locations
               mountPath: /usr/share/bigbluebutton/nginx
               readOnly: true
-            {{- if .Values.nginx.apiMate.enabled }}
-            - name: api-mate
-              mountPath: /usr/share/api-mate
-              readOnly: true
-            {{- end }}
             - name: tls
               mountPath: /etc/nginx/tls
               readOnly: true
@@ -194,10 +163,6 @@ spec:
         - name: locations
           configMap:
             name: bbb-nginx-locations
-        {{- if .Values.nginx.apiMate.enabled }}
-        - name: api-mate
-          emptyDir: {}
-        {{- end }}
         - name: tls
           secret:
             secretName: {{ .Values.nginx.tlsSecret }}

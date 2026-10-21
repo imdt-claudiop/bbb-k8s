@@ -187,7 +187,7 @@ release; it does not route meetings between cells.
 - **Media network** (D4): LiveKit with `hostNetwork: true` (`chart/templates/livekit.yaml:59`).
 - **Network policy** (D6, D14): default-deny plus named allows; LiveKit's flows by Cilium node
   entities when the cluster has Cilium, by `livekit.nodeIP` otherwise
-  (`chart/templates/networkpolicy.yaml:240,301`).
+  (`chart/templates/networkpolicy.yaml:216,277`).
 - **Clusters described**: DigitalOcean ([doks.md](doks.md), `clusters/doks-hackweek.yaml`) and
   a single k3s machine ([k3s.md](k3s.md), `clusters/k3s-local.yaml`).
 

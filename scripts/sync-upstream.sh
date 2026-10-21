@@ -41,11 +41,11 @@ show record-and-playback/core/scripts/bigbluebutton.yml > "$ROOT/chart/files/big
 show build/packages-template/bbb-livekit/livekit.yaml > "$ROOT/chart/files/livekit.yaml"
 set_value bootstrap schemaSha "$(show bbb-graphql-server/bbb_schema.sql | sha256sum | cut -d' ' -f1)"
 
-# The location files of docker/nginx/Dockerfile (bbb-nginx). api-mate.nginx is this chart's own
-# file and is left alone.
+# The location files of docker/nginx/Dockerfile (bbb-nginx), all of them upstream: the
+# directory is cleared and rewritten from the pinned commit.
 out="$ROOT/chart/files/nginx"
 mkdir -p "$out"
-find "$out" -name '*.nginx' ! -name api-mate.nginx -delete
+find "$out" -name '*.nginx' -delete
 while read -r src dst; do
   show "$src" > "$out/$dst"
 done <<'EOF'
