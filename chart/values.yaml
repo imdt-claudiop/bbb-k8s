@@ -17,6 +17,11 @@ secrets:
   salt: bbb-salt      # key: security-salt
   hasura: bbb-hasura  # key: admin-secret
   livekit: bbb-livekit  # keys: api-secret, keys.yaml (<apiKey>: <secret>)
+  # Optional: a Secret with key ca.crt (PEM), a certificate authority that bbb-web and helm test
+  # trust in addition to the public ones. For a TLS certificate signed by a local CA, whose
+  # public host bbb-web downloads from (the default presentation) and helm test calls; a local
+  # test install (docs/k3s.md). Empty: only the public CAs.
+  extraCA: ""
 
 # Node roles (spec D1). Label the nodes with  bbb-k8s/role=<role>.
 nodeRoleLabel: bbb-k8s/role

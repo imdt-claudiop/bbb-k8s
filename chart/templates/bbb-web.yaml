@@ -78,6 +78,13 @@ spec:
               set -e
               { cat /etc/bigbluebutton-template/bbb-web.properties; printf '\nsecuritySalt=%s\n' "$SHARED_SECRET"; } > /props/bbb-web.properties
               {{ include "bbb.dataTree" . }}
+              {{- if .Values.secrets.extraCA }}
+              # The JVM's CAs plus secrets.extraCA, read by bbb-web through JAVA_TOOL_OPTIONS.
+              cp "$JAVA_HOME/lib/security/cacerts" /trust/cacerts
+              chmod u+w /trust/cacerts
+              keytool -importcert -noprompt -alias extra-ca -file /extra-ca/ca.crt \
+                -keystore /trust/cacerts -storepass changeit
+              {{- end }}
           env:
             - name: SHARED_SECRET
               valueFrom:
@@ -91,10 +98,22 @@ spec:
               mountPath: /props
             - name: data
               mountPath: /var/bigbluebutton
+            {{- if .Values.secrets.extraCA }}
+            - name: trust
+              mountPath: /trust
+            - name: extra-ca
+              mountPath: /extra-ca
+              readOnly: true
+            {{- end }}
       containers:
         - name: bbb-web
           # Heap: the image's JDK_JAVA_OPTIONS (-Xms384m -Xmx384m, those of bbb-web.service).
           image: {{ include "bbb.officialImage" (dict "root" . "name" "web") }}
+          {{- if .Values.secrets.extraCA }}
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: -Djavax.net.ssl.trustStore=/trust/cacerts -Djavax.net.ssl.trustStorePassword=changeit
+          {{- end }}
           ports:
             - name: http
               containerPort: 8090
@@ -122,6 +141,11 @@ spec:
               subPath: settings.yml
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.secrets.extraCA }}
+            - name: trust
+              mountPath: /trust
+              readOnly: true
+            {{- end }}
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -136,3 +160,10 @@ spec:
             name: client-settings
         - name: tmp
           emptyDir: {}
+        {{- if .Values.secrets.extraCA }}
+        - name: trust
+          emptyDir: {}
+        - name: extra-ca
+          secret:
+            secretName: {{ .Values.secrets.extraCA }}
+        {{- end }}

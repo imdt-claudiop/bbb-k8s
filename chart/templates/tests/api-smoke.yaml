@@ -37,6 +37,10 @@ spec:
             secretKeyRef:
               name: {{ .Values.secrets.salt }}
               key: security-salt
+        {{- if .Values.secrets.extraCA }}
+        - name: CURL_CA_BUNDLE
+          value: /extra-ca/ca.crt
+        {{- end }}
       resources:
         requests: { cpu: 50m, memory: 64Mi }
         limits: { cpu: 500m, memory: 128Mi }
@@ -47,7 +51,17 @@ spec:
       volumeMounts:
         - name: tmp
           mountPath: /tmp
+        {{- if .Values.secrets.extraCA }}
+        - name: extra-ca
+          mountPath: /extra-ca
+          readOnly: true
+        {{- end }}
   volumes:
     - name: tmp
       emptyDir:
         sizeLimit: 64Mi
+    {{- if .Values.secrets.extraCA }}
+    - name: extra-ca
+      secret:
+        secretName: {{ .Values.secrets.extraCA }}
+    {{- end }}
