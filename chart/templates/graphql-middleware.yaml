@@ -74,6 +74,13 @@ spec:
           ports:
             - name: http
               containerPort: 8378
+          # The port opens only once the Redis subscription is up: while Redis is away at start,
+          # the startup probe keeps waiting (up to 10 minutes) instead of liveness killing it.
+          startupProbe:
+            tcpSocket:
+              port: 8378
+            periodSeconds: 10
+            failureThreshold: 60
           readinessProbe:
             tcpSocket:
               port: 8378
@@ -81,7 +88,6 @@ spec:
           livenessProbe:
             tcpSocket:
               port: 8378
-            initialDelaySeconds: 20
             periodSeconds: 20
           resources:
             {{- toYaml .Values.graphqlMiddleware.resources | nindent 12 }}

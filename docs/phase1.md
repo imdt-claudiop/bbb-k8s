@@ -17,8 +17,9 @@
 - **Identifiers**: decisions are `D<n>` (section 14), limitations `L<n>` (section 15). The
   chart's comments and install.md cite them by these identifiers.
 - **Glossary**: *cell*, one complete BigBlueButton deployment (one release in the namespace
-  `bbb` of a cluster, one public host); *pin*, the pair `bbb.sourceSha` and `officialImages.tag`; *schema marker*,
-  the `schema-sha:<sha>` comment on the `bbb_graphql` database.
+  `bbb` of a cluster, one public host); *pin*, the pair `bbb.sourceSha` and
+  `officialImages.tag`; *schema marker*, the `schema-sha:<sha>` comment on the `bbb_graphql`
+  database.
 
 ## 1. Purpose, scope and non-goals
 
@@ -158,8 +159,9 @@ not route meetings between cells.
 - **Paths behind bbb-nginx**: `chart/files/nginx/*.nginx`, the official location files with
   the Service names of this chart (`scripts/sync-upstream.sh:44-80`).
 - **Values an operator sets per cluster**: `publicHost`, `livekit.nodeIP`,
-  `livekit.networkPolicy`, `livekit.config` (e.g. `rtc.ips.includes`, `rtc.tcp_port`), the `role` and `storageClass`
-  keys, `nginx.service`, `secrets.extraCA` (`clusters/*.yaml` are examples).
+  `livekit.networkPolicy`, `livekit.config` (e.g. `rtc.ips.includes`, `rtc.tcp_port`), the
+  `role` and `storageClass` keys, `nginx.service`, `secrets.extraCA` (`clusters/*.yaml` are
+  examples).
 - **Values an operator MUST NOT edit by hand**: `bbb.sourceSha`, `officialImages.tag` and
   `bootstrap.schemaSha` move together through `scripts/sync-upstream.sh` (section 10), and
   `chart/files/*` is its output.
@@ -230,9 +232,9 @@ not route meetings between cells.
   (`field is immutable`), delete the Completed Jobs named in the error (they only re-run
   checks or the idempotent bootstrap) and roll back again.
 - **Changes that end meetings in progress** (I1): any change to akka-apps or bbb-web pods
-  (image, config, `publicHost`, a new schema), a Redis restart (it restarts gql-middleware and
-  drops its clients, install.md "Known limitations of this slice"). These SHOULD run in an
-  agreed maintenance window.
+  (image, config, `publicHost`, a new schema), a Redis restart (it restarts gql-middleware,
+  bbb-export-annotations and the resque worker, and drops its clients, install.md "Known
+  limitations of this slice"). These SHOULD run in an agreed maintenance window.
 - **Diagnosis**: `helm test bbb -n bbb` then `kubectl -n bbb logs api-smoke` (section 13);
   per-component logs with `kubectl -n bbb logs deploy/<name>`.
 
@@ -269,7 +271,8 @@ identifier.
   writers run as 998 (I4).
 - **D3 Single Redis with AOF on a volume.** Context: Redis holds queues and recording events,
   not only messages. Decision: one Redis, append-only file, no password, reachable only through
-  NetworkPolicy. Status: accepted. Consequences: a Redis restart restarts gql-middleware.
+  NetworkPolicy. Status: accepted. Consequences: a Redis restart restarts gql-middleware,
+  bbb-export-annotations and the resque worker.
 - **D4 Media on the node's network.** Context: LiveKit announces the address it binds.
   Decision: host network on the `media` node, `livekit.nodeIP` per cluster, UDP
   16384-32768, ICE-TCP fallback on `rtc.tcp_port` (443 on DOKS, 7881 on a single machine).

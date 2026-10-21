@@ -389,6 +389,11 @@ Then confirm in the DigitalOcean panel or with `doctl compute volume list` that 
 - One replica per service; restarting akka-apps ends the meetings it holds (spec L1, L2).
 - Camera and screen sharing use the same LiveKit path but are not part of the validated set.
 - The middleware waits for its Redis subscription at start by itself (its port stays closed
-  until then) and exits when it loses it (by design upstream), so a Redis restart restarts the
-  middleware and drops the clients connected through it; they reconnect. A change to its
-  ConfigMap restarts it on the next upgrade (`bbb-k8s/config-sha`).
+  until then, under a startup probe of up to 10 minutes) and exits when it loses it (by design
+  upstream), so a Redis restart restarts the middleware and drops the clients connected through
+  it; they reconnect. A change to its ConfigMap restarts it on the next upgrade
+  (`bbb-k8s/config-sha`).
+- A Redis restart also restarts bbb-export-annotations and the resque worker of `recording`:
+  they exit while the `redis` name does not resolve (`ENOTFOUND`) and come back in
+  CrashLoopBackOff cycles once Redis is Ready (measured on k3s: a few minutes, 8 and 6
+  restarts).
