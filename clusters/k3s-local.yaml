@@ -4,6 +4,7 @@
 publicHost: bbb.10-111-12-105.sslip.io
 livekit:
   role: all
+  networkPolicy: plain   # flannel, no Cilium
   nodeIP: 10.111.12.105
   config:
     rtc:

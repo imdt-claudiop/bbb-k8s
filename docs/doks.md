@@ -14,7 +14,7 @@ In the control panel: **Kubernetes** > **Create Cluster** [confirm].
 | Region | NYC1 |
 | Kubernetes version | 1.37 (`v1.37.0`) |
 | Node pool | one pool, 4 nodes of `s-4vcpu-8gb` (4 vCPU, 8 GB RAM, 160 GB disk) |
-| Network plugin | Cilium, the DOKS default (the chart writes its LiveKit policies for it) |
+| Network plugin | Cilium, the DOKS default (`livekit.networkPolicy: cilium` in the values) |
 
 Four nodes give each node role its own node (below). The stack requests about 6 vCPU and
 7.5 GiB in total, so fewer, larger nodes also work, with several roles pointed at one label

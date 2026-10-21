@@ -162,6 +162,12 @@ livekit:
   nodeIP: ""
   # Key id (not a secret: it travels in every token header); the secret is in bbb-livekit.
   apiKey: bbbk8s
+  # How the network policies admit LiveKit's flows (it runs on the host network, which plain
+  # podSelectors cannot match): cilium = CiliumNetworkPolicies by node entity; plain =
+  # NetworkPolicies by livekit.nodeIP (exact where pods reach the media node at that address, as
+  # on one machine); auto = cilium when the cluster serves cilium.io/v2/CiliumNetworkPolicy, plain
+  # otherwise. A render without the cluster (helm template, GitOps) cannot ask: set cilium or plain.
+  networkPolicy: auto
   # Overrides merged over the package's livekit.yaml (chart/files/livekit.yaml).
   config:
     rtc:

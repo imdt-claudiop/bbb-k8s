@@ -243,9 +243,14 @@ was not repeated.
 
 ### NetworkPolicy and the host network
 
-livekit-server carries the node identity, so plain NetworkPolicies cannot select it: the chart
-adds CiliumNetworkPolicies naming the node entities on LiveKit's ports (nginx, the SFU and the
-recorder to 7880; LiveKit to Redis and to the SFU webhook; the recorder to the media ports).
+livekit-server carries the node identity, so plain NetworkPolicies cannot select it. The chart
+admits LiveKit's flows (nginx, the SFU and the recorder to 7880; LiveKit to Redis and to the SFU
+webhook; the recorder to the media ports) as `livekit.networkPolicy` says: `cilium`,
+CiliumNetworkPolicies naming the node entities; `plain`, NetworkPolicies by `livekit.nodeIP`,
+exact only where pods reach the media node at that address (one machine); `auto` (default),
+cilium when the cluster serves `cilium.io/v2/CiliumNetworkPolicy`. A render without the cluster
+(`helm template`, GitOps) cannot ask, so the cluster values set it: `cilium` in
+`clusters/doks-hackweek.yaml`, `plain` in `clusters/k3s-local.yaml`.
 Policies do not protect a host-network pod itself: any pod in the cluster can open LiveKit's
 port 7880 (its API still needs a token signed with the secret). From the internet 7880 is
 filtered.

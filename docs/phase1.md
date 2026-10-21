@@ -56,8 +56,8 @@ storage class for ReadWriteOnce volumes (install.md, "Prerequisites").
 
 ## 3. Containers
 
-Rendered from `helm template bbb chart -n bbb -f clusters/doks-hackweek.yaml --api-versions
-cilium.io/v2/CiliumNetworkPolicy`. Every workload has exactly one replica.
+Rendered from `helm template bbb chart -n bbb -f clusters/doks-hackweek.yaml`. Every workload
+has exactly one replica.
 
 | Workload (kind) | Image | Node role | Ports | Role in the cell |
 |---|---|---|---|---|
@@ -156,7 +156,7 @@ release; it does not route meetings between cells.
 - **Paths behind bbb-nginx**: `chart/files/nginx/*.nginx`, the official location files with
   the Service names of this chart (`scripts/sync-upstream.sh:44-80`).
 - **Values an operator sets per cluster**: `publicHost`, `livekit.nodeIP`,
-  `livekit.config` (e.g. `rtc.ips.includes`, `rtc.tcp_port`), the `role` and `storageClass`
+  `livekit.networkPolicy`, `livekit.config` (e.g. `rtc.ips.includes`, `rtc.tcp_port`), the `role` and `storageClass`
   keys, `nginx.service`, `secrets.extraCA` (`clusters/*.yaml` are examples).
 - **Values an operator MUST NOT edit by hand**: `bbb.sourceSha`, `officialImages.tag` and
   `bootstrap.schemaSha` move together through `scripts/sync-upstream.sh` (section 10), and
@@ -186,8 +186,8 @@ release; it does not route meetings between cells.
   (`chart/values.yaml:141`), TLS terminated by nginx; no Ingress.
 - **Media network** (D4): LiveKit with `hostNetwork: true` (`chart/templates/livekit.yaml:59`).
 - **Network policy** (D6, D14): default-deny plus named allows; LiveKit's flows by Cilium node
-  entities when the cluster has Cilium, by `livekit.nodeIP` otherwise
-  (`chart/templates/networkpolicy.yaml:216,277`).
+  entities or by `livekit.nodeIP`, as `livekit.networkPolicy` says
+  (`chart/templates/networkpolicy.yaml:224,285`).
 - **Clusters described**: DigitalOcean ([doks.md](doks.md), `clusters/doks-hackweek.yaml`) and
   a single k3s machine ([k3s.md](k3s.md), `clusters/k3s-local.yaml`).
 
@@ -297,12 +297,14 @@ identifier.
   routes every path and authenticates. Decision: Service `LoadBalancer` in TCP mode with
   `externalTrafficPolicy: Local`. Status: accepted, supersedes D5. Consequences: the client IP
   reaches nginx; the certificate is a plain `kubernetes.io/tls` Secret.
-- **D14 LiveKit policies follow the network plugin.** Context: a host-network pod cannot be
-  selected by a plain NetworkPolicy; not every cluster runs Cilium. Decision:
-  CiliumNetworkPolicies by node entity when the API has `cilium.io/v2/CiliumNetworkPolicy`,
-  plain NetworkPolicies by `livekit.nodeIP` otherwise. Status: accepted. Consequences: on
-  clusters without Cilium the rule is exact only where pods reach the media node at
-  `livekit.nodeIP`; `helm template` needs `--api-versions` to render the Cilium variant.
+- **D14 LiveKit policies follow the network plugin, chosen by a value.** Context: a host-network
+  pod cannot be selected by a plain NetworkPolicy; not every cluster runs Cilium; a render without
+  the cluster (helm template, GitOps) cannot ask which. Decision: `livekit.networkPolicy`:
+  `cilium` (CiliumNetworkPolicies by node entity), `plain` (NetworkPolicies by `livekit.nodeIP`),
+  or `auto` (the default: cilium when the API has `cilium.io/v2/CiliumNetworkPolicy`, plain
+  otherwise); another value fails the render. Status: accepted. Consequences: cluster values set
+  it explicitly (`cilium` on DOKS, `plain` on k3s); `plain` is exact only where pods reach the
+  media node at `livekit.nodeIP`.
 - **D15 Optional extra certificate authority.** Context: bbb-web and `helm test` call the
   public host and refuse an untrusted certificate. Decision: `secrets.extraCA` names a Secret
   whose `ca.crt` both trust; empty by default. Status: accepted. Consequences: a local test can

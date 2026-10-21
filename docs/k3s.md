@@ -31,8 +31,9 @@ kubectl get storageclass       # local-path (default)
 ```
 
 k3s answers a `LoadBalancer` Service with its own load balancer (ServiceLB) on the node's
-ports, uses `local-path` volumes, and runs flannel, without Cilium: the chart then writes its
-LiveKit network policies as plain NetworkPolicies by `livekit.nodeIP`.
+ports, uses `local-path` volumes, and runs flannel, without Cilium: the k3s values set
+`livekit.networkPolicy: plain`, so the LiveKit network policies are plain NetworkPolicies by
+`livekit.nodeIP`.
 
 ## 2. Label the node and write the values
 

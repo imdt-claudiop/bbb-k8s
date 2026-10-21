@@ -3,6 +3,9 @@
 # LoadBalancer gets a new IP: run the script again and update this line.
 publicHost: bbbk8s-ip-165-245-153-14.bbb.imdt.dev
 livekit:
+  # Pods reach the media node at its VPC address, not at nodeIP: plain policies by nodeIP would
+  # block LiveKit's flows.
+  networkPolicy: cilium
   # ExternalIP of the node labelled bbb-k8s/role=media (temp-hackweek-3b3nqq). A replaced node
   # gets a new IP: update it.
   nodeIP: 142.93.115.37
