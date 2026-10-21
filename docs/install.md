@@ -35,7 +35,7 @@ re-apply them, or set them as node pool labels in the cloud provider.
 
 Every BigBlueButton component runs the official image the monorepo publishes
 (`docker/README.md` there): `ghcr.io/bigbluebutton/bigbluebutton/bbb-<target>`, at the immutable
-per-commit tag in `officialImages.tag` (`<branch>-<sha7>`, e.g. `v4.1.x-develop-c58638f`), never
+per-commit tag in `officialImages.tag` (`<branch>-<sha7>`, e.g. `v4.1.x-develop-5b80a5b`), never
 the moving branch tag. Postgres, Redis and LiveKit are their upstream images. The images are
 public. The chart adds only deployment configuration: the files mounted at the bare-metal paths,
 init containers for what a package postinst does on a volume, and the Service names.
@@ -171,11 +171,10 @@ client always uses `https`/`wss` on port 443 of the page's host.
   chart's TLS site over `sites-available/bigbluebutton` and the location files of
   `chart/files/nginx` over `/usr/share/bigbluebutton/nginx`: the image's own point at
   127.0.0.1, these at the Services (`bbb-web:8090`, `gql-middleware:8378`, `hasura:8085`,
-  `livekit:7880`, `bbb-webrtc-sfu:3008`, `bbb-shared-notes:8787`, `bbb-webhooks:3005`), and they
-  add `webhooks.nginx`, which the image does not ship yet. The image's Hasura balancer site is
-  replaced by a comment (its `upstream hasura` would capture `http://hasura:8085`). It runs as
-  998 to read `bbb-data`, and serves the default assets, slides, recordings and dashboard reports
-  from there. Its ingress is the public entry point below.
+  `livekit:7880`, `bbb-webrtc-sfu:3008`, `bbb-shared-notes:8787`, `bbb-webhooks:3005`). The
+  image's Hasura balancer site is replaced by a comment (its `upstream hasura` would capture
+  `http://hasura:8085`). It runs as 998 to read `bbb-data`, and serves the default assets,
+  slides, recordings and dashboard reports from there. Its ingress is the public entry point below.
 - **html5-client**, **learning-dashboard** and **playback** are the official static-app images
   (nginx on 8080) that `bbb-nginx` proxies to by these Service names (`static-apps.yaml`).
 

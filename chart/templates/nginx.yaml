@@ -49,8 +49,7 @@ data:
 ---
 # The location files of the official bbb-nginx image with this chart's Service names
 # (chart/files/nginx, written by scripts/sync-upstream.sh), mounted over the image's copies,
-# which point at 127.0.0.1. Includes webhooks.nginx, which the image does not ship, and
-# api-mate.nginx.
+# which point at 127.0.0.1, plus this chart's api-mate.nginx.
 apiVersion: v1
 kind: ConfigMap
 metadata:
