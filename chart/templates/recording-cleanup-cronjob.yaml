@@ -31,6 +31,7 @@ spec:
             runAsUser: 998
             runAsGroup: 998
             fsGroup: 998
+            fsGroupChangePolicy: OnRootMismatch
           restartPolicy: Never
           containers:
             - name: cleanup

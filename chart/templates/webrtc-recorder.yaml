@@ -38,6 +38,7 @@ spec:
         runAsUser: 998
         runAsGroup: 998
         fsGroup: 998
+        fsGroupChangePolicy: OnRootMismatch
       initContainers:
         # The recorder exits (fatal) when its first Redis connection fails (fresh install).
         {{- include "bbb.waitRedis" . | nindent 8 }}

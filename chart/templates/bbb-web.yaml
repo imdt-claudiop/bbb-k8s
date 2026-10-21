@@ -63,6 +63,7 @@ spec:
         runAsUser: 998
         runAsGroup: 998
         fsGroup: 998
+        fsGroupChangePolicy: OnRootMismatch
       initContainers:
         # The official image writes bbb-web.properties from its environment only when the file is
         # missing; the chart's file carries more (the properties above), so it is written here:

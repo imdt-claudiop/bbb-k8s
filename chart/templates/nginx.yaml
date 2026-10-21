@@ -114,6 +114,7 @@ spec:
         runAsUser: 998
         runAsGroup: 998
         fsGroup: 998
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: nginx
           image: {{ include "bbb.officialImage" (dict "root" . "name" "nginx") }}

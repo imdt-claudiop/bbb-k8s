@@ -127,7 +127,7 @@ Each invariant is a rule the code imposes; breaking it breaks the cell.
   release per namespace, `publicHost` unique per release.
 - **I4. Every pod that writes `bbb-data` or `bbb-recorder` MUST run as uid/gid 998.** The
   directories belong to `bigbluebutton` (998), and bbb-web, nginx, recording,
-  export-annotations and the recorder read each other's files (`chart/templates/webrtc-recorder.yaml:38-40`,
+  export-annotations and the recorder read each other's files (`chart/templates/webrtc-recorder.yaml:38-41`,
   install.md "How shared notes and the annotation export are wired"). Verify: `kubectl -n bbb get pods -o
   jsonpath='{..securityContext.runAsUser}'`.
 - **I5. Every BigBlueButton image MUST be the immutable per-commit tag in

@@ -98,6 +98,7 @@ spec:
         runAsUser: 998
         runAsGroup: 998
         fsGroup: 998
+        fsGroupChangePolicy: OnRootMismatch
       initContainers:
         {{- include "bbb.waitBootstrap" (dict "root" . "user" "blocknote_app" "key" "blocknote-app-password") | nindent 8 }}
         # Fill the DB password placeholder from the secret into the runtime config.
