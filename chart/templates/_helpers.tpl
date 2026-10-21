@@ -24,9 +24,10 @@ nodeSelector:
 {{ .root.Values.officialImages.registry }}/bbb-{{ .name }}:{{ required "officialImages.tag is empty" .root.Values.officialImages.tag }}
 {{- end }}
 
-{{/* Job name keyed on schema sha + bootstrap image tag: Job templates are immutable. */}}
+{{/* Job name keyed on the schema sha, the bootstrap script and the Postgres image: Job templates
+     are immutable. */}}
 {{- define "bbb.bootstrapJobName" -}}
-bbb-bootstrap-{{ printf "%s%s" .Values.bootstrap.schemaSha .Values.bootstrap.tag | sha256sum | trunc 8 }}
+bbb-bootstrap-{{ printf "%s%s%s" .Values.bootstrap.schemaSha (.Files.Get "scripts/bootstrap.sh") .Values.postgres.image | sha256sum | trunc 8 }}
 {{- end }}
 
 {{- define "bbb.dbPasswordEnv" -}}

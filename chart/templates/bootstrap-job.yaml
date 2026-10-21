@@ -1,8 +1,13 @@
-{{- if not .Values.bootstrap.schemaSha }}{{ fail "bootstrap.schemaSha is empty: run images/build.sh bootstrap" }}{{ end }}
+{{- if not .Values.bootstrap.schemaSha }}{{ fail "bootstrap.schemaSha is empty: run scripts/sync-upstream.sh" }}{{ end }}
 # Plain resource, not a hook: a hook would deadlock with "helm --wait" waiting for akka-apps,
 # which in turn waits for this Job (spec D8, order Postgres/Redis -> bootstrap -> akka).
-# The name changes with the schema or the image tag, so an upgrade replaces the Job instead
-# of patching its immutable template.
+# The name changes with the schema, the script or the Postgres image, so an upgrade replaces the
+# Job instead of patching its immutable template.
+#
+# No image of its own: chart/scripts/bootstrap.sh runs on the Postgres image, with the schemas
+# copied from the official images that ship them (bbb_schema.sql in graphql-server,
+# blocknote_schema.sql in shared-notes-server). bootstrap.sh refuses to run when the copied
+# bbb_schema.sql does not match bootstrap.schemaSha.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -21,15 +26,36 @@ spec:
         {{- include "bbb.selector" "bootstrap" | nindent 8 }}
     spec:
       restartPolicy: Never
-      imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
       initContainers:
         - name: wait-postgres
           image: {{ .Values.postgres.image }}
           command: ["sh", "-c", "until pg_isready -h postgres -p 5432 -t 2; do sleep 2; done"]
+        - name: schema-graphql
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "graphql-server") }}
+          command: ["cp", "/usr/share/bbb-graphql-server/bbb_schema.sql", "/bootstrap/"]
+          volumeMounts:
+            - name: schemas
+              mountPath: /bootstrap
+        - name: schema-notes
+          image: {{ include "bbb.officialImage" (dict "root" . "name" "shared-notes-server") }}
+          command: ["cp", "/usr/share/bbb-shared-notes-server/blocknote_schema.sql", "/bootstrap/"]
+          volumeMounts:
+            - name: schemas
+              mountPath: /bootstrap
       containers:
         - name: bootstrap
-          image: {{ include "bbb.image" (dict "root" . "name" "bootstrap" "tag" .Values.bootstrap.tag) }}
+          image: {{ .Values.postgres.image }}
+          command: ["bash", "-c"]
+          args:
+            - {{ .Files.Get "scripts/bootstrap.sh" | toJson }}
+          # The postgres user of the image (the bootstrap image ran as it).
+          securityContext:
+            runAsUser: 999
+            runAsGroup: 999
+          volumeMounts:
+            - name: schemas
+              mountPath: /bootstrap
+              readOnly: true
           env:
             - name: PGHOST
               value: postgres
@@ -40,3 +66,6 @@ spec:
             {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "BBB_HASURA_PASSWORD" "key" "bbb-hasura-password") | nindent 12 }}
             {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "HASURA_APP_PASSWORD" "key" "hasura-app-password") | nindent 12 }}
             {{- include "bbb.dbPasswordEnv" (dict "root" . "env" "BLOCKNOTE_APP_PASSWORD" "key" "blocknote-app-password") | nindent 12 }}
+      volumes:
+        - name: schemas
+          emptyDir: {}
