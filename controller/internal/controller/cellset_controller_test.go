@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	appsv1 "k8s.io/api/apps/v1"
+	"strings"
 	"testing"
 	"time"
 
@@ -431,17 +432,35 @@ func TestProvisionTimeoutFails(t *testing.T) {
 	if phaseOf(got, "cell-1") != bbbv1alpha1.CellFailed {
 		t.Fatalf("not Failed: %+v", got.Status.Cells)
 	}
-	// Failed is not replaced on its own and keeps its number; the NEXT reconcile plans a
-	// new cell for the gap under a fresh number.
+	// A Failed cell keeps holding its replica slot: NO new cell is planned while the entry
+	// remains (the spec rules out the controller replacing it on its own), the condition
+	// names it, and status.replicas counts serving cells only.
 	got = reconcile(t, w)
 	if phaseOf(got, "cell-1") != bbbv1alpha1.CellFailed {
 		t.Fatalf("Failed cell dropped: %+v", got.Status.Cells)
 	}
-	if phaseOf(got, "cell-2") != bbbv1alpha1.CellProvisioning || got.Status.Replicas != 1 {
-		t.Fatalf("replacement: %+v replicas=%d", got.Status.Cells, got.Status.Replicas)
+	if len(got.Status.Cells) != 1 || got.Status.Replicas != 0 {
+		t.Fatalf("slot not held: %+v replicas=%d", got.Status.Cells, got.Status.Replicas)
 	}
-	if got.Status.NextCell != 3 {
-		t.Fatalf("next: %d", got.Status.NextCell)
+	if got.Status.NextCell != 2 {
+		t.Fatalf("counter burned: %d", got.Status.NextCell)
+	}
+	cond := meta.FindStatusCondition(got.Status.Conditions, "ReplicasHeldByFailedCell")
+	if cond == nil || cond.Status != metav1.ConditionTrue || !strings.Contains(cond.Message, "cell-1") {
+		t.Fatalf("missing held condition: %+v", got.Status.Conditions)
+	}
+	// The operator deletes the Failed entry from the status: the slot is released and the
+	// replacement comes under a fresh number.
+	got.Status.Cells = nil
+	if err := w.c.Status().Update(context.Background(), got); err != nil {
+		t.Fatal(err)
+	}
+	got = reconcile(t, w)
+	if phaseOf(got, "cell-2") != bbbv1alpha1.CellProvisioning || got.Status.NextCell != 3 {
+		t.Fatalf("replacement after release: %+v next=%d", got.Status.Cells, got.Status.NextCell)
+	}
+	if meta.FindStatusCondition(got.Status.Conditions, "ReplicasHeldByFailedCell") != nil {
+		t.Fatalf("held condition not cleared: %+v", got.Status.Conditions)
 	}
 }
 
@@ -450,6 +469,30 @@ func TestProvisionTimeoutDefaultsTo20m(t *testing.T) {
 	cs.Spec.ProvisionTimeout = metav1.Duration{}
 	if provisionTimeout(cs) != 20*time.Minute {
 		t.Fatalf("fallback: %v", provisionTimeout(cs))
+	}
+}
+
+func TestRetireCellThatNeverGotItsHost(t *testing.T) {
+	// The LB IP never arrives: the cell has the provisional release and no host. A
+	// scale-down must still finish - straight to uninstall, no drain, no balancer.
+	objs := append(cellWorldObjects(1), cellset(1))
+	w := newWorld(t, objs...)
+	got := reconcile(t, w) // plans cell-1, installs the provisional release
+	if !w.helm.deployed["cell-1"] || got.Status.Cells[0].Host != "" {
+		t.Fatalf("setup: %+v deployed=%v", got.Status.Cells, w.helm.deployed)
+	}
+	zero := int32(0)
+	got.Spec.Replicas = &zero
+	if err := w.c.Update(context.Background(), got); err != nil {
+		t.Fatal(err)
+	}
+	got = reconcile(t, w) // retires it: uninstall + namespace delete
+	if w.helm.deployed["cell-1"] {
+		t.Fatalf("provisional release survived: %+v", got.Status.Cells)
+	}
+	got = reconcile(t, w) // namespace gone -> Retired, pruned
+	if len(got.Status.Cells) != 0 || got.Status.Replicas != 0 {
+		t.Fatalf("not retired: %+v", got.Status.Cells)
 	}
 }
 

@@ -127,8 +127,10 @@ func (r *CellSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	// Scale up: new cells for the gap, numbered by the global counter. The node pool comes
-	// first (the operator's step), so a cell may sit waiting for its nodes.
-	for r.serving(&cs) < desired {
+	// first (the operator's step), so a cell may sit waiting for its nodes. A Failed cell
+	// keeps occupying its slot until the operator deletes its status entry (the spec rules
+	// out the controller replacing it on its own), so it counts against the gap.
+	for r.serving(&cs)+r.failed(&cs) < desired {
 		n := cs.Status.NextCell
 		cs.Status.NextCell = n + 1
 		cs.Status.Cells = append(cs.Status.Cells, bbbv1alpha1.CellStatus{
@@ -167,6 +169,14 @@ func (r *CellSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			continue
 		}
 		again = again || wait
+	}
+
+	// A Failed cell holds its replica slot: say so, and say what releases it.
+	if names := r.failedNames(&cs); len(names) > 0 {
+		r.setCondition(&cs, "ReplicasHeldByFailedCell", metav1.ConditionTrue, "FailedCellHoldsSlot",
+			fmt.Sprintf("failed cells %s hold their replica slots; delete their entries from status.cells to release them (the controller never replaces a Failed cell on its own)", strings.Join(names, ", ")))
+	} else {
+		meta.RemoveStatusCondition(&cs.Status.Conditions, "ReplicasHeldByFailedCell")
 	}
 
 	// Retired cells leave the list: their namespaces are gone and the number is never
@@ -209,6 +219,21 @@ func (r *CellSetReconciler) serving(cs *bbbv1alpha1.CellSet) int32 {
 		}
 	}
 	return n
+}
+
+// failed counts Failed cells; failedNames lists them.
+func (r *CellSetReconciler) failed(cs *bbbv1alpha1.CellSet) int32 {
+	return int32(len(r.failedNames(cs)))
+}
+
+func (r *CellSetReconciler) failedNames(cs *bbbv1alpha1.CellSet) []string {
+	var names []string
+	for _, c := range cs.Status.Cells {
+		if c.Phase == bbbv1alpha1.CellFailed {
+			names = append(names, c.Name)
+		}
+	}
+	return names
 }
 
 func (r *CellSetReconciler) hasPhase(cs *bbbv1alpha1.CellSet, p bbbv1alpha1.CellPhase) bool {

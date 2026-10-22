@@ -11,7 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -90,15 +89,6 @@ func TestCRDAndScaleSubresource(t *testing.T) {
 		t.Fatalf("status: %v", err)
 	}
 	// The scale subresource, as kubectl scale and the HPA use it.
-	cset, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gvr := "cellsets.v1alpha1.bbb-k8s.imdt.dev"
-	_ = gvr
-	scaleClient := cset.RESTClient()
-	_ = scaleClient
-	// Through the subresource API directly:
 	var scale autoscalingv1.Scale
 	if err := c.SubResource("scale").Get(ctx, &got, &scale); err != nil {
 		t.Fatalf("get scale: %v", err)

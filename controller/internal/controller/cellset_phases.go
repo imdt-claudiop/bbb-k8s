@@ -205,6 +205,17 @@ func (r *CellSetReconciler) retire(ctx context.Context, cs *bbbv1alpha1.CellSet,
 	if err != nil {
 		return false, err
 	}
+	if deployed && cell.Host == "" {
+		// Retired straight out of early Provisioning: only the provisional release exists,
+		// the cell never served and was never registered - nothing to drain, nothing to
+		// deliver, no balancer entry. Straight to uninstall (a meetings read against an
+		// empty host would error forever and block every later retirement).
+		if err := r.HelmClient.Uninstall(cell.Name); err != nil {
+			return false, err
+		}
+		logger.Info("cell uninstalled", "cell", cell.Name)
+		deployed = false
+	}
 	if deployed {
 		if since := time.Since(cell.PhaseSince.Time); since < drainGrace {
 			cell.Waiting = fmt.Sprintf("drain grace (%s of %s)", since.Round(time.Second), drainGrace)
