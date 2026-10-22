@@ -278,7 +278,11 @@ cilium when the cluster serves `cilium.io/v2/CiliumNetworkPolicy`. A render with
 `clusters/doks-hackweek.yaml`, `plain` in `clusters/k3s-local.yaml`.
 Policies do not protect a host-network pod itself: any pod in the cluster can open LiveKit's
 port 7880 (its API still needs a token signed with the secret). From the internet 7880 is
-filtered. With several cells and `cilium`, the node-entity rules admit every node of the
+filtered. An in-cluster client of the public entry (e.g. a balancer polling the cells)
+never arrives as an external IP: Cilium short-circuits the cell's LoadBalancer IP to the
+nginx pod, and the public ipBlock rule does not match in-cluster identities (measured on
+DOKS: Scalelite's poller timed out on the cells) - name its namespace in
+`nginx.clientNamespaces` and it is admitted by name. With several cells and `cilium`, the node-entity rules admit every node of the
 cluster, not only the cell's own media node: any node reaches the Redis (no password) and the
 SFU webhook of every cell. Accepted for now; restricting them by node label is later work.
 

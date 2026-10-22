@@ -36,7 +36,8 @@ const (
 // in tests).
 type Helm interface {
 	ChartVersion() (string, error)
-	Deployed(namespace string) (bool, error)
+	// Deployed reports whether the release exists and the publicHost it carries.
+	Deployed(namespace string) (bool, string, error)
 	Apply(namespace string, values map[string]any) error
 	Test(namespace string) error
 	Uninstall(namespace string) error
@@ -219,13 +220,22 @@ func (r *CellSetReconciler) hasPhase(cs *bbbv1alpha1.CellSet, p bbbv1alpha1.Cell
 	return false
 }
 
-// ensureNextCell keeps the global, ever-increasing counter (decision A): the max over every
-// CellSet's own high-water mark and every cell-<n> namespace that exists, plus one. It never
-// goes down, so a number is never reused even after its namespace is gone.
+// NextCellAnnotation seeds the global counter when adopting a cluster whose cell history
+// predates the controller (numbers of deleted cells are never reused; the cluster alone
+// cannot remember them).
+const NextCellAnnotation = "bbb-k8s.imdt.dev/next-cell"
+
+// ensureNextCell keeps the global, ever-increasing counter (decision A): the max over the
+// operator's seed annotation, every CellSet's own high-water mark and every cell-<n>
+// namespace that exists, plus one. It never goes down, so a number is never reused even
+// after its namespace is gone.
 func (r *CellSetReconciler) ensureNextCell(ctx context.Context, cs *bbbv1alpha1.CellSet) error {
 	next := cs.Status.NextCell
 	if next < 1 {
 		next = 1
+	}
+	if seed, err := strconv.Atoi(cs.Annotations[NextCellAnnotation]); err == nil && int32(seed) > next {
+		next = int32(seed)
 	}
 	var sets bbbv1alpha1.CellSetList
 	if err := r.List(ctx, &sets); err != nil {

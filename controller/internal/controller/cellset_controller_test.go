@@ -33,8 +33,11 @@ func newFakeHelm() *fakeHelm {
 	return &fakeHelm{version: "0.4.0", deployed: map[string]bool{},
 		testFails: map[string]bool{}, applied: map[string]map[string]any{}}
 }
-func (f *fakeHelm) ChartVersion() (string, error)    { return f.version, nil }
-func (f *fakeHelm) Deployed(ns string) (bool, error) { return f.deployed[ns], nil }
+func (f *fakeHelm) ChartVersion() (string, error) { return f.version, nil }
+func (f *fakeHelm) Deployed(ns string) (bool, string, error) {
+	host, _ := f.applied[ns]["publicHost"].(string)
+	return f.deployed[ns], host, nil
+}
 func (f *fakeHelm) Apply(ns string, v map[string]any) error {
 	f.deployed[ns] = true
 	f.applied[ns] = v
@@ -133,7 +136,7 @@ func cellWorldObjects(n int) []client.Object {
 	name := fmt.Sprintf("cell-%d", n)
 	objs := []client.Object{
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "bbb-41-values", Namespace: "cellsets"},
-			Data: map[string]string{"values.yaml": "nodeRoleLabel: bbb-k8s/role\n"}},
+			Data: map[string]string{"values.yaml": "nodeRoleLabel: bbb-k8s/role\nrecording:\n  scalelite:\n    spool:\n      host: spool@sl\n"}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "bbb-wildcard-tls", Namespace: "cellsets"},
 			Data: map[string][]byte{"tls.crt": []byte("c"), "tls.key": []byte("k")}},
 	}
@@ -299,6 +302,23 @@ func registeredWorld(t *testing.T, replicas int32) (*world, *bbbv1alpha1.CellSet
 	return w, cs
 }
 
+// backdateRetiring ages a Retiring cell past the drain grace.
+func backdateRetiring(t *testing.T, w *world, name string) {
+	t.Helper()
+	var cs bbbv1alpha1.CellSet
+	if err := w.c.Get(context.Background(), types.NamespacedName{Name: "bbb-41", Namespace: "cellsets"}, &cs); err != nil {
+		t.Fatal(err)
+	}
+	for i := range cs.Status.Cells {
+		if cs.Status.Cells[i].Name == name {
+			cs.Status.Cells[i].PhaseSince = metav1.NewTime(time.Now().Add(-3 * time.Minute))
+		}
+	}
+	if err := w.c.Status().Update(context.Background(), &cs); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestScaleDownPicksFewestParticipantsTieOldest(t *testing.T) {
 	w, _ := registeredWorld(t, 1)
 	w.meetings["c1.example"] = [2]int{1, 5} // 5 participants
@@ -310,12 +330,17 @@ func TestScaleDownPicksFewestParticipantsTieOldest(t *testing.T) {
 	if w.bal.state["https://c2.example/bigbluebutton/api"] != "cordoned" {
 		t.Fatalf("not suspended: %+v", w.bal.state)
 	}
-	// Tie: the oldest goes. With nothing to drain, the retirement completes in one pass:
-	// cell-1 (older) deregistered and uninstalled, cell-2 untouched.
+	// Tie: the oldest goes. Quiet from the start, it still holds for the drain grace, then
+	// completes: cell-1 (older) deregistered and uninstalled, cell-2 untouched.
 	w2, _ := registeredWorld(t, 1)
 	w2.meetings["c1.example"] = [2]int{0, 0}
 	w2.meetings["c2.example"] = [2]int{0, 0}
 	got2 := reconcile(t, w2)
+	if phaseOf(got2, "cell-1") != bbbv1alpha1.CellRetiring || !w2.helm.deployed["cell-1"] {
+		t.Fatalf("tie victim should be Retiring inside the grace: %+v", got2.Status.Cells)
+	}
+	backdateRetiring(t, w2, "cell-1")
+	got2 = reconcile(t, w2)
 	if w2.helm.deployed["cell-1"] {
 		t.Fatalf("tie should retire the oldest (cell-1): %+v", got2.Status.Cells)
 	}
@@ -338,6 +363,7 @@ func TestRetiringWaitsThenRetires(t *testing.T) {
 	if w.bal.state["https://c1.example/bigbluebutton/api"] != "cordoned" {
 		t.Fatalf("not suspended: %+v", w.bal.state)
 	}
+	backdateRetiring(t, w, "cell-1")
 	got = reconcile(t, w)
 	if phaseOf(got, "cell-1") != bbbv1alpha1.CellRetiring || !w.helm.deployed["cell-1"] {
 		t.Fatalf("retired with meetings: %+v", got.Status.Cells)
@@ -377,8 +403,12 @@ func TestRefusesZeroingOnlyRegisteredSet(t *testing.T) {
 	w.meetings["c1.example"] = [2]int{0, 0}
 	w.meetings["c2.example"] = [2]int{0, 0}
 	got := reconcile(t, w)
-	// One cell retires (2 -> 1, completes at once with nothing to drain); the last one is
-	// refused.
+	// One cell retires (2 -> 1); the last one is refused.
+	if phaseOf(got, "cell-1") != bbbv1alpha1.CellRetiring {
+		t.Fatalf("expected cell-1 retiring: %+v", got.Status.Cells)
+	}
+	backdateRetiring(t, w, "cell-1")
+	got = reconcile(t, w)
 	if w.helm.deployed["cell-1"] {
 		t.Fatalf("expected cell-1 retired: %+v", got.Status.Cells)
 	}
@@ -420,5 +450,41 @@ func TestProvisionTimeoutDefaultsTo20m(t *testing.T) {
 	cs.Spec.ProvisionTimeout = metav1.Duration{}
 	if provisionTimeout(cs) != 20*time.Minute {
 		t.Fatalf("fallback: %v", provisionTimeout(cs))
+	}
+}
+
+func TestNextCellSeedAnnotation(t *testing.T) {
+	cs := cellset(1)
+	cs.Annotations = map[string]string{NextCellAnnotation: "3"}
+	w := newWorld(t, cs)
+	got := reconcile(t, w)
+	if len(got.Status.Cells) != 1 || got.Status.Cells[0].Name != "cell-3" || got.Status.NextCell != 4 {
+		t.Fatalf("seed ignored: %+v next=%d", got.Status.Cells, got.Status.NextCell)
+	}
+}
+
+func TestRetiringHoldsForDrainGrace(t *testing.T) {
+	w, _ := registeredWorld(t, 1)
+	w.meetings["c1.example"] = [2]int{0, 0}
+	w.meetings["c2.example"] = [2]int{0, 0}
+	got := reconcile(t, w) // suspends the victim; the grace keeps it deployed
+	if !w.helm.deployed["cell-1"] {
+		t.Fatalf("torn down inside the drain grace: %+v", got.Status.Cells)
+	}
+	if phaseOf(got, "cell-1") != bbbv1alpha1.CellRetiring {
+		t.Fatalf("victim: %+v", got.Status.Cells)
+	}
+	// Grace over (backdate), quiet: the retirement completes.
+	for i := range got.Status.Cells {
+		if got.Status.Cells[i].Name == "cell-1" {
+			got.Status.Cells[i].PhaseSince = metav1.NewTime(time.Now().Add(-3 * time.Minute))
+		}
+	}
+	if err := w.c.Status().Update(context.Background(), got); err != nil {
+		t.Fatal(err)
+	}
+	reconcile(t, w)
+	if w.helm.deployed["cell-1"] {
+		t.Fatal("still deployed after the grace")
 	}
 }

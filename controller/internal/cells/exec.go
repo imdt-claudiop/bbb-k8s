@@ -14,10 +14,12 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 )
 
-// PendingRecordings counts the tars still in the cell's local handoff spool
-// (/var/bigbluebutton/spool): the delivery signal Retired waits for (phase 2 spec,
-// "Condição de Retired"). It runs `ls` in the recording pod; no recording pod running
-// means nothing can be pending.
+// PendingRecordings counts the cell's recordings not yet delivered (phase 2 spec,
+// "Condição de Retired"): every recorded meeting without its <id>-sender.done (the scalelite
+// post_publish writes it after handing the tar over) that did not end as .norecord, plus any
+// tar still in the local handoff spool. A recording still crossing the pipeline counts - the
+// first live run retired a cell while one was processing and the recording died with it. It
+// runs in the recording pod; no recording pod running means nothing can be pending.
 func PendingRecordings(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, cellNS string) (int, error) {
 	pods, err := cs.CoreV1().Pods(cellNS).List(ctx, metav1.ListOptions{
 		LabelSelector: "app.kubernetes.io/name=recording"})
@@ -38,8 +40,17 @@ func PendingRecordings(ctx context.Context, cfg *rest.Config, cs kubernetes.Inte
 		Namespace(cellNS).SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
 			Container: "resque-worker",
-			Command:   []string{"sh", "-c", "ls /var/bigbluebutton/spool 2>/dev/null | wc -l"},
-			Stdout:    true, Stderr: true,
+			Command: []string{"sh", "-c", `p=0
+for f in /var/bigbluebutton/recording/status/recorded/*.done; do
+  [ -e "$f" ] || continue
+  id=$(basename "$f" .done)
+  [ -e "/var/bigbluebutton/recording/status/published/$id-sender.done" ] && continue
+  [ -e "/var/bigbluebutton/recording/status/archived/$id.norecord" ] && continue
+  p=$((p+1))
+done
+t=$(ls /var/bigbluebutton/spool 2>/dev/null | wc -l)
+echo $((p+t))`},
+			Stdout: true, Stderr: true,
 		}, scheme.ParameterCodec)
 	exec, err := remotecommand.NewSPDYExecutor(cfg, "POST", req.URL())
 	if err != nil {

@@ -140,6 +140,12 @@ bbbWeb:
 
 nginx:
   tlsSecret: bbb-tls  # kubernetes.io/tls, created by scripts/create-secrets.sh
+  # Namespaces of in-cluster clients of the public entry (e.g. an in-cluster balancer that
+  # polls the cells). A pod reaching the cell's LoadBalancer IP is short-circuited by Cilium
+  # to the nginx pod, and the public ipBlock rule does not match in-cluster identities
+  # (measured on DOKS: Scalelite's poller timed out on the cells), so each namespace here is
+  # admitted by name. Empty: external clients only.
+  clientNamespaces: []
   # Public entry point: a DigitalOcean LoadBalancer in TCP mode in front of this nginx, which
   # terminates TLS itself (docs/install.md, "Public entry point").
   service:

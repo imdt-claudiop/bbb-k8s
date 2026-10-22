@@ -102,7 +102,7 @@ func (r *CellSetReconciler) provision(ctx context.Context, cs *bbbv1alpha1.CellS
 			}
 			if ip == "" {
 				// Install (or keep) the provisional release so the LB gets created.
-				deployed, err := r.HelmClient.Deployed(cell.Name)
+				deployed, _, err := r.HelmClient.Deployed(cell.Name)
 				if err != nil {
 					return false, err
 				}
@@ -124,11 +124,17 @@ func (r *CellSetReconciler) provision(ctx context.Context, cs *bbbv1alpha1.CellS
 		cell.Host = host
 	}
 
-	// 3. The release at the final host (idempotent: upgrade with the same values is a no-op
-	// revision), then workloads Ready, DNS, helm test.
-	vals := cells.Values(frozen, n, host, mediaIP, r.VPCCIDR)
-	if err := r.HelmClient.Apply(cell.Name, vals); err != nil {
+	// 3. The release at the final host, applied only when the deployed one differs (an
+	// upgrade every requeue would pile helm revisions), then workloads Ready, DNS, helm test.
+	deployed, deployedHost, err := r.HelmClient.Deployed(cell.Name)
+	if err != nil {
 		return false, err
+	}
+	if !deployed || deployedHost != host {
+		vals := cells.Values(frozen, n, host, mediaIP, r.VPCCIDR)
+		if err := r.HelmClient.Apply(cell.Name, vals); err != nil {
+			return false, err
+		}
 	}
 	if ok, waiting, err := r.workloadsReady(ctx, cell.Name); err != nil {
 		return false, err
@@ -184,16 +190,26 @@ func (r *CellSetReconciler) register(ctx context.Context, cs *bbbv1alpha1.CellSe
 	return false, nil
 }
 
+// drainGrace is how long a Retiring cell must stay observed-quiet before it is torn down:
+// the recorded/ended markers of a meeting that JUST finished take a moment to materialize,
+// and an instant read right after the suspension misses them (measured live: a recording
+// one second into its pipeline died with the cell twice).
+const drainGrace = 2 * time.Minute
+
 // retire finishes a Retiring cell: zero meetings, recordings delivered, the balancer itself
 // at zero load, then deregister, uninstall, volumes gone. No deadline: the status says what
 // it is waiting for and the operator decides (spec, "Retirar uma célula").
 func (r *CellSetReconciler) retire(ctx context.Context, cs *bbbv1alpha1.CellSet, cell *bbbv1alpha1.CellStatus) (bool, error) {
 	logger := log.FromContext(ctx)
-	deployed, err := r.HelmClient.Deployed(cell.Name)
+	deployed, _, err := r.HelmClient.Deployed(cell.Name)
 	if err != nil {
 		return false, err
 	}
 	if deployed {
+		if since := time.Since(cell.PhaseSince.Time); since < drainGrace {
+			cell.Waiting = fmt.Sprintf("drain grace (%s of %s)", since.Round(time.Second), drainGrace)
+			return true, nil
+		}
 		salt, err := cells.Salt(ctx, r.Client, cell.Name)
 		if err != nil {
 			return false, err
@@ -207,13 +223,19 @@ func (r *CellSetReconciler) retire(ctx context.Context, cs *bbbv1alpha1.CellSet,
 			cell.Waiting = fmt.Sprintf("meetings=%d participants=%d", meetings, participants)
 			return true, nil
 		}
-		pending, err := r.PendingRecordings(ctx, cell.Name)
-		if err != nil {
+		// "Recordings delivered" only means something with delivery on: without a spool
+		// nothing ever writes the sender.done the check reads.
+		if delivery, err := r.deliveryEnabled(ctx, cs); err != nil {
 			return false, err
-		}
-		if pending > 0 {
-			cell.Waiting = fmt.Sprintf("recordings pending delivery=%d", pending)
-			return true, nil
+		} else if delivery {
+			pending, err := r.PendingRecordings(ctx, cell.Name)
+			if err != nil {
+				return false, err
+			}
+			if pending > 0 {
+				cell.Waiting = fmt.Sprintf("recordings pending delivery=%d", pending)
+				return true, nil
+			}
 		}
 		b, err := r.MakeBalancer(ctx, r, cs)
 		if err != nil {
@@ -267,6 +289,25 @@ func (r *CellSetReconciler) retire(ctx context.Context, cs *bbbv1alpha1.CellSet,
 	cell.Phase = bbbv1alpha1.CellRetired
 	cell.Waiting = ""
 	logger.Info("cell retired", "cell", cell.Name)
+	return false, nil
+}
+
+// deliveryEnabled says whether the frozen values switch recording delivery on
+// (recording.scalelite.spool.host non-empty).
+func (r *CellSetReconciler) deliveryEnabled(ctx context.Context, cs *bbbv1alpha1.CellSet) (bool, error) {
+	frozen, err := cells.FrozenValues(ctx, r.Client, cs.Namespace, cs.Spec.Version.ValuesRef)
+	if err != nil {
+		return false, err
+	}
+	if rec, ok := frozen["recording"].(map[string]any); ok {
+		if sl, ok := rec["scalelite"].(map[string]any); ok {
+			if spool, ok := sl["spool"].(map[string]any); ok {
+				if host, ok := spool["host"].(string); ok && host != "" {
+					return true, nil
+				}
+			}
+		}
+	}
 	return false, nil
 }
 

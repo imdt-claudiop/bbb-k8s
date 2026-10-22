@@ -10,9 +10,9 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
-	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/storage/driver"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 )
 
 const ReleaseName = "bbb"
@@ -21,20 +21,26 @@ const ReleaseName = "bbb"
 // chart at a commit; the controller carries that chart and refuses another version).
 type Helm struct {
 	ChartPath string
-	settings  *cli.EnvSettings
 }
 
 func NewHelm(chartPath string) *Helm {
-	return &Helm{ChartPath: chartPath, settings: cli.New()}
+	return &Helm{ChartPath: chartPath}
 }
 
 func (h *Helm) Chart() (*chart.Chart, error) {
 	return loader.Load(h.ChartPath)
 }
 
+// config builds an action configuration whose client getter is SCOPED to the cell's
+// namespace: manifests without a namespace of their own land there, as `helm -n` does.
+// (Measured live: a getter left on the kubeconfig default sent a whole cell into
+// "default", whatever install.Namespace said.)
 func (h *Helm) config(namespace string) (*action.Configuration, error) {
+	flags := genericclioptions.NewConfigFlags(false)
+	ns := namespace
+	flags.Namespace = &ns
 	cfg := new(action.Configuration)
-	if err := cfg.Init(h.settings.RESTClientGetter(), namespace, "secret",
+	if err := cfg.Init(flags, namespace, "secret",
 		func(format string, v ...interface{}) { slog.Debug(fmt.Sprintf(format, v...)) }); err != nil {
 		return nil, err
 	}
@@ -54,7 +60,10 @@ func (h *Helm) Status(namespace string) (*release.Release, error) {
 	return rel, err
 }
 
-// Apply installs or upgrades the release with the merged values, waiting for readiness.
+// Apply installs or upgrades the release with the merged values. It does not wait:
+// readiness is the reconciler's own check (workloadsReady), so the status stays live and a
+// hung API call cannot pin a reconcile for minutes (seen live: a create call stalled to the
+// 10-minute deadline under Wait).
 func (h *Helm) Apply(namespace string, values map[string]any, timeout time.Duration) error {
 	ch, err := h.Chart()
 	if err != nil {
@@ -70,7 +79,6 @@ func (h *Helm) Apply(namespace string, values map[string]any, timeout time.Durat
 		inst := action.NewInstall(cfg)
 		inst.ReleaseName = ReleaseName
 		inst.Namespace = namespace
-		inst.Wait = true
 		inst.Timeout = timeout
 		_, err = inst.Run(ch, values)
 		return err
@@ -78,7 +86,6 @@ func (h *Helm) Apply(namespace string, values map[string]any, timeout time.Durat
 	up := action.NewUpgrade(cfg)
 	up.Namespace = namespace
 	up.ResetValues = true
-	up.Wait = true
 	up.Timeout = timeout
 	_, err = up.Run(ReleaseName, ch, values)
 	return err
@@ -124,9 +131,13 @@ func (s SDK) ChartVersion() (string, error) {
 	return ch.Metadata.Version, nil
 }
 
-func (s SDK) Deployed(namespace string) (bool, error) {
+func (s SDK) Deployed(namespace string) (bool, string, error) {
 	rel, err := s.Status(namespace)
-	return rel != nil, err
+	if rel == nil || err != nil {
+		return false, "", err
+	}
+	host, _ := rel.Config["publicHost"].(string)
+	return true, host, nil
 }
 
 func (s SDK) Apply(namespace string, values map[string]any) error {

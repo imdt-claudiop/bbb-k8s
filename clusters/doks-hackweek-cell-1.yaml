@@ -30,3 +30,6 @@ recording:
       path: /var/bigbluebutton/spool
       namespace: scalelite
       port: 2222
+# The lab balancer polls the cells from inside the cluster.
+nginx:
+  clientNamespaces: [scalelite]
