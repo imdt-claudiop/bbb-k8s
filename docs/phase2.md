@@ -1,43 +1,43 @@
-# Proposta da Fase 2: células e controller
+# Phase 2 proposal: cells and controller
 
-2026-10-21 · Tiago Daniel Jacobs · contra o repositório em 064e3e5
+2026-10-21 · Tiago Daniel Jacobs · against the repository at 064e3e5
 
-## Contexto
+## Context
 
-A fase 1 provou a unidade: o BigBlueButton 4.1 inteiro num cluster DOKS, um pod por serviço, reinstalável do zero (1m44s e zero restarts, segundo o relatório da fase 1). O estado de uma reunião vive na memória de singletons encadeados (akka-apps, bbb-web, LiveKit, SFU) e trafega por um Redis e um Postgres que servem aquele conjunto de reuniões. A unidade de escala é o stack inteiro.
+Phase 1 proved the unit: the whole BigBlueButton 4.1 on a DOKS cluster, one pod per service, reinstallable from zero (1m44s and zero restarts, per the phase 1 report). A meeting's state lives in the memory of chained singletons (akka-apps, bbb-web, LiveKit, SFU) and travels through a Redis and a Postgres that serve that set of meetings. The unit of scale is the whole stack.
 
-A fase 2 replica a unidade. Cada réplica é uma **célula**: o chart da fase 1 instalado mais uma vez, dona das próprias reuniões, com Redis, Postgres e nó de mídia próprios. Dois akka-apps no mesmo banco se matariam a cada boot (o `preStart` do akka marca todas as reuniões do banco como encerradas), então células nunca compartilham akka, Redis ou Postgres.
+Phase 2 replicates the unit. Each replica is a **cell**: the phase 1 chart installed once more, owning its own meetings, with its own Redis, Postgres and media node. Two akka-apps on the same database would kill each other at every boot (akka's `preStart` marks every meeting in the database as ended), so cells never share akka, Redis or Postgres.
 
-O relatório da fase 1 propôs "células + router". Esta proposta muda duas coisas: o router sai, porque o balanceador que o integrador já usa faz esse papel; e entra um controller que cuida só do ciclo de vida da célula. Quantas células existem é decisão do operador; escala automática fica para depois.
+The phase 1 report proposed "cells + router". This proposal changes two things: the router goes away, because the balancer the integrator already uses plays that role; and in comes a controller that handles only the cell's lifecycle. How many cells exist is the operator's decision; autoscaling is left for later.
 
-## Decisões
+## Decisions
 
-| Decisão | O que significa | Por quê |
+| Decision | What it means | Why |
 |---|---|---|
-| Sem router próprio | O balanceador já em uso (Scalelite ou equivalente) escolhe a célula no `create`, redireciona o `join` e importa as gravações | O router era a peça com mais risco de virar produto; o balanceador já faz exatamente isso |
-| Controller só de ciclo de vida | Sobe, registra, retira e remove células. Não decide quantas devem existir nem cria nós | Contagem é problema resolvido no Kubernetes (HPA, KEDA); nesta fase o operador escreve o número |
-| Célula imutável | Nasce com uma versão e morre com ela. Upgrade é célula nova | Evita rollout em singletons que guardam estado em memória |
-| Gravações provisórias | A célula publica, entrega ao integrador e pode apagar | É o modelo BBB + Scalelite: o servidor é descartável, o integrador guarda |
-| Sem teto de capacidade | O balanceador espalha pela menor carga; o controller não mede ocupação | O teto só servia ao gatilho de escala, que saiu do escopo |
-| Pod e nó dentro da célula viva | Fora do escopo | Fase 3 |
+| No router of our own | The balancer already in use (Scalelite or equivalent) picks the cell on `create`, redirects the `join` and imports the recordings | The router was the piece most at risk of becoming a product; the balancer already does exactly this |
+| Lifecycle-only controller | Brings up, registers, retires and removes cells. It does not decide how many should exist nor create nodes | Counting is a solved problem in Kubernetes (HPA, KEDA); in this phase the operator writes the number |
+| Immutable cell | Born with one version, dies with it. An upgrade is a new cell | Avoids rollouts on singletons that hold state in memory |
+| Provisional recordings | The cell publishes, delivers to the integrator and may delete | It is the BBB + Scalelite model: the server is disposable, the integrator keeps |
+| No capacity ceiling | The balancer spreads by least load; the controller does not measure occupancy | The ceiling only served the scaling trigger, which was cut from scope |
+| Pod and node inside a live cell | Out of scope | Phase 3 |
 
-A regra da fase 1 continua valendo dentro da célula: só muda o que um serviço precisa para rodar fora de uma máquina única, e toda correção no BigBlueButton sai como PR upstream.
+The phase 1 rule still holds inside the cell: only what a service needs to run outside a single machine changes, and every BigBlueButton fix goes out as an upstream PR.
 
-## A célula
+## The cell
 
-Um release Helm do chart da fase 1 num namespace próprio (`cell-<n>`, nome nunca reutilizado), com os mesmos 18 pods de serviço, dois Jobs e uma CronJob, os mesmos quatro nós, um por papel (storage, media, control, data), e os mesmos quatro volumes. O nó de mídia é exclusivo: o livekit-server roda em hostNetwork e ocupa 7880, a porta TCP de mídia (443 em DOKS) e a faixa UDP 16384-32768. Quatro nós por célula é o que mantém o teto de usuários alto; compactar papéis num nó já é possível por values, mas baixa o teto e fica para quando os serviços em si escalarem.
+A Helm release of the phase 1 chart in its own namespace (`cell-<n>`, a name never reused), with the same 18 service pods, two Jobs and one CronJob, the same four nodes, one per role (storage, media, control, data), and the same four volumes. The media node is exclusive: livekit-server runs on hostNetwork and takes 7880, the media TCP port (443 on DOKS) and the UDP range 16384-32768. Four nodes per cell is what keeps the user ceiling high; packing roles onto one node is already possible through values, but it lowers the ceiling and is left for when the services themselves scale.
 
-**Valores próprios de cada célula**, gerados pelo controller: namespace, nome do LoadBalancer, host público (pelo template de nome do CellSet), `livekit.nodeIP` e `rtc.ips.includes` (IP público do nó de mídia e a faixa da VPC) e os Secrets de banco, salt, Hasura e LiveKit. Comuns a todas: o certificado TLS que cobre os hosts das células e a credencial de entrega de gravações. Não há pull secret: as imagens são as oficiais, públicas.
+**Each cell's own values**, generated by the controller: the namespace, the LoadBalancer name, the public host (from the CellSet's name template), `livekit.nodeIP` and `rtc.ips.includes` (the media node's public IP and the VPC range) and the database, salt, Hasura and LiveKit Secrets. Common to all: the TLS certificate covering the cells' hosts and the recording-delivery credential. There is no pull secret: the images are the official, public ones.
 
-**Versão** da célula é o chart num commit: a tag única das imagens oficiais (`officialImages.tag`), o `schemaSha` e os arquivos do upstream sincronizados em `chart/files`, mais a cópia congelada do values.yaml. Trocar de versão é um commit do chart, nunca um `helm upgrade` da célula. O segundo `helm upgrade` do caminho `{{.ip}}` só troca o host, e as anotações de checksum do chart reiniciam os pods que o leem.
+A cell's **version** is the chart at a commit: the single tag of the official images (`officialImages.tag`), the `schemaSha` and the upstream files synced into `chart/files`, plus the frozen copy of values.yaml. Changing version is a chart commit, never a `helm upgrade` of the cell. The second `helm upgrade` of the `{{.ip}}` path only changes the host, and the chart's checksum annotations restart the pods that read it.
 
-**Nós.** Um node pool por célula, criado pelo operador antes de escalar, com os rótulos `bbb-k8s/cell=<n>` e o papel; rótulo de pool sobrevive à troca de nó. Criar nó leva minutos e é o passo lento de uma célula nova.
+**Nodes.** One node pool per cell, created by the operator before scaling, with the labels `bbb-k8s/cell=<n>` and the role; a pool label survives node replacement. Creating a node takes minutes and is the slow step of a new cell.
 
-**Estado fora do akka.** Os serviços auxiliares guardam pouco e por pouco tempo: shared-notes mantém os documentos no Postgres por 60 minutos depois da reunião, export-annotations usa uma fila no Redis e escreve no `bbb-data`, e o Redis guarda as filas do pipeline e os eventos de gravação por 14 dias. Webhooks registrados pela API vivem no Redis da célula: um integrador que usa `/hooks` registra em cada célula, e como o Scalelite propaga isso é ponto do PoC 3.
+**State outside akka.** The auxiliary services keep little, and for a short time: shared-notes keeps the documents in Postgres for 60 minutes after the meeting, export-annotations uses a queue in Redis and writes to `bbb-data`, and Redis holds the pipeline queues and the recording events for 14 days. Webhooks registered through the API live in the cell's Redis: an integrator that uses `/hooks` registers in every cell, and how Scalelite propagates that is a PoC 3 item.
 
-## A CRD e o controller
+## The CRD and the controller
 
-Uma CRD `CellSet` descreve um conjunto de células da mesma versão:
+A `CellSet` CRD describes a set of cells of the same version:
 
 ```yaml
 apiVersion: bbb-k8s.imdt.dev/v1alpha1
@@ -45,118 +45,118 @@ kind: CellSet
 metadata:
   name: bbb-41
 spec:
-  replicas: 2                       # escrito pelo operador
+  replicas: 2                       # written by the operator
   provisionTimeout: 20m
   version:
     chart: 0.3.0
-    valuesRef: bbb-41-values        # ConfigMap com a cópia congelada do values.yaml
+    valuesRef: bbb-41-values        # ConfigMap with the frozen copy of values.yaml
   host:
-    template: "cell-{{.index}}.bbb.exemplo.com"   # {{.ip}} disponível: nome derivado do IP, como na fase 1
-    tlsSecretRef: bbb-wildcard-tls                # copiado para cada célula
+    template: "cell-{{.index}}.bbb.example.com"   # {{.ip}} available: name derived from the IP, as in phase 1
+    tlsSecretRef: bbb-wildcard-tls                # copied to every cell
   balancer:
     kind: scalelite
     url: https://scalelite.example/scalelite/api
     secretRef: scalelite-api
 status:
-  replicas: 2                       # células que servem ou vão servir
+  replicas: 2                       # cells that serve or will serve
   selector: "bbb-k8s/cellset=bbb-41"
   cells:
     - {name: cell-1, phase: Registered}
     - {name: cell-2, phase: Provisioning}
 ```
 
-A CRD declara o subresource `scale` (os três caminhos, inclusive `labelSelectorPath`, opcional na CRD mas obrigatório para o HPA). É o que faz `kubectl scale` funcionar agora e deixa um autoscaler entrar depois sem tocar no controller. Subiu `spec.replicas`, o controller cria células; desceu, retira a célula com menos participantes e, em empate, a mais antiga. `status.replicas` conta Provisioning, Ready e Registered, não Retiring, Retired ou Failed.
+The CRD declares the `scale` subresource (all three paths, including `labelSelectorPath`, optional in a CRD but required for the HPA). It is what makes `kubectl scale` work now and lets an autoscaler come in later without touching the controller. `spec.replicas` goes up, the controller creates cells; it goes down, the controller retires the cell with the fewest participants and, on a tie, the oldest. `status.replicas` counts Provisioning, Ready and Registered, not Retiring, Retired or Failed.
 
-Ciclo de vida da célula, seis estados, sem volta depois de Retiring:
+The cell's lifecycle, six states, no way back after Retiring:
 
 ```
-Provisioning ---API responde---> Ready ---register---> Registered
+Provisioning ---API answers----> Ready ---register---> Registered
      |                             |                       |
-     | prazo esgotado              | prazo esgotado        | upgrade ou redução
+     | deadline expired            | deadline expired      | upgrade or scale-down
      v                             v                       v
    Failed <------------------------+                   Retiring
-   (operador apaga)                                        |
-                                                           | 0 reuniões e gravações entregues
+   (operator deletes)                                      |
+                                                           | 0 meetings and recordings delivered
                                                            v
                                                        Retired
                                                        (deregister, uninstall)
 ```
 
-`Retiring` é o caminho sem volta: a célula sai da rotação para terminar em paz e só vira `Retired` com zero reuniões e as gravações entregues. `Failed` é Provisioning ou Ready que não chegou à API no prazo (`spec.provisionTimeout`, 20 minutos por padrão): fica no `status` para o operador apagar; o controller não substitui sozinho. Os nomes são os valores da fase na spec e não dependem do balanceador.
+`Retiring` is the path of no return: the cell leaves the rotation to finish in peace and only becomes `Retired` with zero meetings and the recordings delivered. `Failed` is a Provisioning or Ready that did not reach the API within the deadline (`spec.provisionTimeout`, 20 minutes by default): it stays in the `status` for the operator to delete; the controller does not replace it on its own. The names are the phase values of this spec and do not depend on the balancer.
 
-**Hooks.** Três, parte da spec, implementados por balanceador: `register(host, secret)`, `suspend` e `deregister`. O PoC implementa só o Scalelite, pela Servers API (desde a 1.5.1, autenticada por checksum como a API do BBB): `addServer` com a URL da API da célula e o segredo (nasce desabilitado, como na rake; a API não documenta o estado inicial) seguido de `updateServer state=enable`; `updateServer state=cordon`; `deleteServer`. Cordon é o único estado do Scalelite que bloqueia reuniões novas e deixa as existentes terminarem: `disable` não drena (pela API só muda o estado, e o `join` das reuniões existentes passa a falhar; pela rake, ou encerra todas ou não faz nada). O poller do Scalelite passa um servidor cordoned para disabled quando a carga zera. O segredo do Scalelite vive só no namespace do controller; nenhuma célula o recebe.
+**Hooks.** Three, part of the spec, implemented per balancer: `register(host, secret)`, `suspend` and `deregister`. The PoC implements only Scalelite, through the Servers API (since 1.5.1, checksum-authenticated like BBB's API): `addServer` with the cell's API URL and the secret (it is born disabled, as with rake; the API does not document the initial state) followed by `updateServer state=enable`; `updateServer state=cordon`; `deleteServer`. Cordon is the only Scalelite state that blocks new meetings and lets the existing ones finish: `disable` does not drain (through the API it only changes the state, and the `join` of existing meetings starts to fail; through rake, it either ends them all or does nothing). Scalelite's poller moves a cordoned server to disabled when the load reaches zero. The Scalelite secret lives only in the controller's namespace; no cell receives it.
 
-**Subir uma célula** (Provisioning, Ready, Registered):
+**Bringing up a cell** (Provisioning, Ready, Registered):
 
-1. Secrets da célula (inclusive a cópia do Secret TLS) e chart com o host do template, no node pool já criado. Se o template usa `{{.ip}}`, host provisório primeiro e um segundo `helm upgrade` com o nome final, como na fase 1.
-2. Host resolvendo no DNS público para o IP do LB. Quem escreve o registro não é o controller: o external-dns pela anotação do Service, o resolvedor da IMDT ou o operador. Prazo: o mesmo `provisionTimeout`.
-3. Todos os Deployments e StatefulSets `Ready` e o `helm test` passando (create, join, getMeetingInfo e end pelo host público). O DNS precisa resolver antes: o bbb-web baixa o `default.pdf` do host público no primeiro `create`.
+1. The cell's Secrets (including the copy of the TLS Secret) and the chart with the host from the template, on the node pool already created. If the template uses `{{.ip}}`, a provisional host first and a second `helm upgrade` with the final name, as in phase 1.
+2. The host resolving on public DNS to the LB's IP. Writing the record is not the controller's job: external-dns through the Service annotation, IMDT's resolver, or the operator. Deadline: the same `provisionTimeout`.
+3. Every Deployment and StatefulSet `Ready` and `helm test` passing (create, join, getMeetingInfo and end through the public host). DNS must resolve first: bbb-web downloads the `default.pdf` from the public host on the first `create`.
 4. `register`.
 
-**Retirar uma célula** (Retiring, Retired): `suspend`; esperar zero reuniões; esperar as gravações entregues; `deregister`, só depois que o próprio balanceador reporta carga zero; `helm uninstall` (derruba o LB); esperar os volumes sumirem (classe Delete). O node pool fica para o operador. Sem teto de tempo: o `status` expõe há quanto tempo e o que falta (reuniões, gravações), e o operador decide encerrar pela API.
+**Retiring a cell** (Retiring, Retired): `suspend`; wait for zero meetings; wait for the recordings to be delivered; `deregister`, only after the balancer itself reports zero load; `helm uninstall` (takes down the LB); wait for the volumes to disappear (Delete class). The node pool is left to the operator. No time ceiling: the `status` exposes for how long and what is missing (meetings, recordings), and the operator decides to end it through the API.
 
-**Upgrade.** Um `CellSet` novo com a versão nova; quando ele tiver tantas células `Registered` quanto o antigo, o antigo recebe `replicas: 0` e todas as suas células passam por Retiring. O controller recusa reduzir a zero o único `CellSet` com células `Registered` num balanceador.
+**Upgrade.** A new `CellSet` with the new version; when it has as many `Registered` cells as the old one, the old one gets `replicas: 0` and all of its cells go through Retiring. The controller refuses to scale to zero the only `CellSet` with `Registered` cells on a balancer.
 
-**Forma.** Operador com CRD desde o PoC, porque o subresource `scale` exige CRD. Roda num namespace próprio e não guarda estado fora da CRD. Cada transição idempotente e retomável.
+**Form.** An operator with a CRD from the PoC on, because the `scale` subresource requires a CRD. It runs in its own namespace and keeps no state outside the CRD. Every transition idempotent and resumable.
 
-## Escala
+## Scaling
 
-`kubectl scale cellset bbb-41 --replicas N`, pelo operador, com o node pool da célula nova já criado. Reunião não migra: reduzir é sempre retirar e esperar, uma célula por vez.
+`kubectl scale cellset bbb-41 --replicas N`, by the operator, with the new cell's node pool already created. Meetings do not migrate: scaling down is always retiring and waiting, one cell at a time.
 
-Criar célula leva minutos, então o pico das 08:00 com centenas de salas abrindo juntas se resolve antes dele: o operador escala com a antecedência medida no PoC 3 (tempo entre o `scale` e a célula `Registered`), com margem de duas vezes.
+Creating a cell takes minutes, so the 08:00 peak with hundreds of rooms opening together is solved before it happens: the operator scales with the lead time measured in PoC 3 (the time between the `scale` and the cell being `Registered`), with a twofold margin.
 
-Escala automática fica para depois e não muda o controller: um ScaledObject do KEDA, ou qualquer autoscaler que fale com o subresource `scale`, escreve `spec.replicas`. Calendário para o pico previsível, métrica de ocupação para o imprevisto (o que exige o teto por célula, também fora desta fase), janela de estabilização longa na redução.
+Autoscaling is left for later and does not change the controller: a KEDA ScaledObject, or any autoscaler that talks to the `scale` subresource, writes `spec.replicas`. A calendar for the predictable peak, an occupancy metric for the unpredictable one (which requires the per-cell ceiling, also outside this phase), a long stabilization window on scale-down.
 
-## Gravações
+## Recordings
 
-A entrega é por integrador; o PoC usa o caminho padrão do Scalelite: o `post_publish` `scalelite_post_publish.rb` empacota os formatos publicados num tar e faz `rsync` para o spool (`host:/path` por SSH); o importador do Scalelite (`recordings:watch`) importa e apaga o tar. Sinal de "entregue": o tar sumiu do spool e a gravação aparece no `getRecordings` do Scalelite. O playback passa a ser servido pelo Scalelite, então o link que o LMS recebe não depende do host da célula.
+Delivery is per integrator; the PoC uses Scalelite's standard path: the `post_publish` script `scalelite_post_publish.rb` packs the published formats into a tar and `rsync`s it to the spool (`host:/path` over SSH); Scalelite's importer (`recordings:watch`) imports and deletes the tar. The "delivered" signal: the tar is gone from the spool and the recording shows up in Scalelite's `getRecordings`. Playback is then served by Scalelite, so the link the LMS receives does not depend on the cell's host.
 
-O que isso pede:
+What this asks for:
 
-- **Egress.** Hoje o pod de recording só sai para o Redis e o DNS. Precisa de liberação para o host do spool e de uma credencial SSH comum às células, restrita ao diretório do spool e só para escrita.
-- **Retenção.** O publicado fica no `bbb-data` (20 Gi) até a célula ser retirada; a CronJob diária de limpeza só apaga intermediários e chaves do Redis com mais de um dia. O `delete_recording` do script chama `bbb-record`, que não existe na imagem; apagar após a entrega é fase 3.
-- **Condição de Retired.** Zero reuniões, fila de export-annotations vazia e nenhuma gravação da célula pendente de entrega, qualquer que seja o integrador. Gravação parada no pipeline aparece no `status` e se recupera pelo runbook (recriar o `.done` re-executa o archive preservando o `events.xml`, desde que a limpeza diária ainda não tenha apagado os intermediários).
+- **Egress.** Today the recording pod only goes out to Redis and DNS. It needs egress to the spool host and an SSH credential shared by the cells, restricted to the spool directory and write-only.
+- **Retention.** The published content stays on `bbb-data` (20 Gi) until the cell is retired; the daily cleanup CronJob only deletes intermediates and Redis keys older than one day. The script's `delete_recording` calls `bbb-record`, which does not exist in the image; deleting after delivery is phase 3.
+- **Retired condition.** Zero meetings, an empty export-annotations queue and no recording of the cell pending delivery, whatever the integrator. A recording stuck in the pipeline shows up in the `status` and is recovered through the runbook (recreating the `.done` re-runs the archive preserving the `events.xml`, as long as the daily cleanup has not yet deleted the intermediates).
 
-## Pré-requisitos no chart
+## Prerequisites in the chart
 
-O chart de hoje não instala duas vezes no mesmo cluster. Estas mudanças vêm antes do controller.
+Today's chart does not install twice in the same cluster. These changes come before the controller.
 
-| Bloqueio | Onde está | Mudança |
+| Blocker | Where it is | Change |
 |---|---|---|
-| Namespace fixo | `templates/namespace.yaml` falha fora de `bbb` | Remover a trava; uma célula por namespace |
-| Nome fixo do LoadBalancer | Anotação `do-loadbalancer-name: bbb-k8s` | Derivar do namespace |
-| Papéis de nó sem célula | `bbb-k8s/role=media` não diz de qual célula é o nó | Acrescentar `bbb-k8s/cell=<n>` ao nodeSelector, como rótulo de node pool |
-| Políticas Cilium por entidade de nó | Qualquer nó alcança o Redis (sem senha) e o webhook do SFU de qualquer célula; qualquer pod alcança a 7880 de qualquer LiveKit | Nenhuma nesta fase: aceito e declarado. Sem Cilium (k3s) o chart já escreve políticas por IP do nó. Depois, restringir por rótulo de nó (`fromNodes`) e senha no Redis (#26110) |
-| Secrets imperativos | `scripts/create-secrets.sh` gera uma vez, por namespace | O controller gera por célula e passa o segredo ao `register` |
-| Volumes Retain | `do-block-storage-retain` em postgres, redis, bbb-data, bbb-recorder | Classe Delete nos quatro: os volumes morrem com a célula |
-| Egress de gravação | Recording só sai para o Redis e o DNS | Regra para o host do spool |
-| Firewall por droplet | UDP 16384-32768 liberado no firewall dos workers (docs/doks.md); nada automatiza isso para nó novo | Regra pela tag do node pool, aplicada pelo operador ao criar o pool |
-| Nós de célula abertos a outras cargas | O nodeSelector prende os pods da célula aos nós dela, mas nada impede controller, Scalelite ou outra carga de cair neles | Taint `bbb-k8s/cell=<n>:NoSchedule` no node pool e toleration no chart |
-| Auto-upgrade do DOKS | A DigitalOcean recicla nós em upgrade automático de patch e em surge upgrade: troca de nó em célula viva | Auto-upgrade desligado no cluster; a janela de manutenção é tratada como upgrade de célula |
+| Fixed namespace | `templates/namespace.yaml` fails outside `bbb` | Remove the lock; one cell per namespace |
+| Fixed LoadBalancer name | Annotation `do-loadbalancer-name: bbb-k8s` | Derive it from the namespace |
+| Node roles without a cell | `bbb-k8s/role=media` does not say which cell the node belongs to | Add `bbb-k8s/cell=<n>` to the nodeSelector, as a node pool label |
+| Cilium policies by node entity | Any node reaches the Redis (no password) and the SFU webhook of any cell; any pod reaches port 7880 of any LiveKit | None in this phase: accepted and declared. Without Cilium (k3s) the chart already writes policies by node IP. Later, restrict by node label (`fromNodes`) and a password on Redis (#26110) |
+| Imperative Secrets | `scripts/create-secrets.sh` generates once, per namespace | The controller generates per cell and passes the secret to `register` |
+| Retain volumes | `do-block-storage-retain` on postgres, redis, bbb-data, bbb-recorder | Delete class on all four: the volumes die with the cell |
+| Recording egress | Recording only goes out to Redis and DNS | A rule for the spool host |
+| Per-droplet firewall | UDP 16384-32768 open in the workers' firewall (docs/doks.md); nothing automates that for a new node | A rule by the node pool's tag, applied by the operator when creating the pool |
+| Cell nodes open to other workloads | The nodeSelector pins the cell's pods to its nodes, but nothing stops the controller, Scalelite or another workload from landing on them | Taint `bbb-k8s/cell=<n>:NoSchedule` on the node pool and a toleration in the chart |
+| DOKS auto-upgrade | DigitalOcean recycles nodes on automatic patch upgrades and on surge upgrades: node replacement in a live cell | Auto-upgrade off on the cluster; the maintenance window is handled as a cell upgrade |
 
 ## PoC
 
-Marco único: duas células atrás de um Scalelite, o operador subindo a segunda com `kubectl scale` e o controller retirando a primeira num upgrade. Roda em DOKS, porque num k3s de uma máquina só cabe uma célula (hostNetwork do LiveKit). Em ordem, cada passo com reinstalação do zero e revisão antes do merge:
+A single milestone: two cells behind one Scalelite, the operator bringing up the second with `kubectl scale` and the controller retiring the first in an upgrade. It runs on DOKS, because a single-machine k3s only fits one cell (LiveKit's hostNetwork). In order, each step with a reinstall from zero and review before the merge:
 
-1. **Chart N vezes.** Critério: duas células no mesmo cluster, cada uma reinstalável do zero sem passo manual além do host e do node pool.
-2. **Entrega de gravação ao Scalelite.** Critério: tar importado, spool vazio, playback pelo host do Scalelite.
-3. **CRD e controller.** Critério: `kubectl scale` de 1 para 2 registra a segunda célula no Scalelite; de 2 para 1 retira a de menos participantes (em empate, a mais antiga) sem encerrar reunião; `Retired` só com zero reuniões e spool consumido. Mede o tempo do `scale` à célula `Registered`, que a DigitalOcean não documenta.
-4. **Upgrade.** Critério: `CellSet` novo no ar, o antigo a zero, nenhuma reunião em curso encerrada pelo processo.
+1. **Chart N times.** Criterion: two cells in the same cluster, each reinstallable from zero with no manual step beyond the host and the node pool.
+2. **Recording delivery to Scalelite.** Criterion: tar imported, spool empty, playback through the Scalelite host.
+3. **CRD and controller.** Criterion: `kubectl scale` from 1 to 2 registers the second cell in Scalelite; from 2 to 1 retires the one with the fewest participants (on a tie, the oldest) without ending a meeting; `Retired` only with zero meetings and the spool consumed. It measures the time from the `scale` to the cell being `Registered`, which DigitalOcean does not document.
+4. **Upgrade.** Criterion: the new `CellSet` up, the old one at zero, no ongoing meeting ended by the process.
 
-## Fora do escopo
+## Out of scope
 
-Cortado desta fase para manter o PoC em quatro passos; volta quando houver motivo medido:
+Cut from this phase to keep the PoC at four steps; it comes back when there is a measured reason:
 
-- Escala automática (KEDA ou HPA) e o que a alimentava: teto por célula, modos de ocupação, estado `Saturated`, hook `resume`, calibração do nó de mídia.
-- Node pools criados pelo controller pela API da DigitalOcean; `Failed` substituída sozinha; teto de tempo em Retiring.
-- Postgres e Redis em emptyDir: o bootstrap é um Job por TCP e não roda de novo quando o volume nasce vazio; os schemas e os metadados do Hasura já vêm das imagens oficiais. Com classe Delete, os volumes já morrem com a célula.
-- Retenção de gravações pelo controller; `kind: webhook` para outros balanceadores (os nomes dos hooks já são agnósticos).
-- Isolamento Cilium entre células.
+- Autoscaling (KEDA or HPA) and what fed it: the per-cell ceiling, occupancy modes, the `Saturated` state, the `resume` hook, media node calibration.
+- Node pools created by the controller through the DigitalOcean API; `Failed` replaced on its own; a time ceiling on Retiring.
+- Postgres and Redis on emptyDir: the bootstrap is a Job over TCP and does not run again when the volume is born empty; the schemas and the Hasura metadata already come from the official images. With the Delete class, the volumes already die with the cell.
+- Recording retention by the controller; `kind: webhook` for other balancers (the hook names are already agnostic).
+- Cilium isolation between cells.
 
-Fase 3, por melhorias de arquitetura:
+Phase 3, as architectural improvements:
 
-- Substituição de pods e manutenção de nós dentro de uma célula viva.
-- Hidratação de estado do akka-apps e do bbb-web; réplicas de qualquer serviço; mídia multi-nó; TURN.
-- Gravação desacoplada por fila e object storage; `bbb-data` fora da célula.
-- SLOs em números.
-- O que a fase 1 ainda deixa de fora: caption inbox, conversão de Office, telefonia, formatos de gravação além de presentation, notas dentro da gravação.
+- Pod replacement and node maintenance inside a live cell.
+- State hydration for akka-apps and bbb-web; replicas of any service; multi-node media; TURN.
+- Recording decoupled through a queue and object storage; `bbb-data` outside the cell.
+- SLOs in numbers.
+- What phase 1 still leaves out: the caption inbox, Office conversion, telephony, recording formats beyond presentation, notes inside the recording.
