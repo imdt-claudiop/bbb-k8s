@@ -525,6 +525,46 @@ func TestMismatchFreezesGrowthOnly(t *testing.T) {
 	}
 }
 
+func TestMismatchProvisioningFailsOnDeadline(t *testing.T) {
+	// A Provisioning cell of a version-mismatched set: fresh, it waits naming the chart it
+	// cannot have; past the provision deadline it is Failed and keeps holding its slot.
+	cs := cellset(1)
+	cs.Spec.Version.Chart = "9.9.9"
+	cs.Status.NextCell = 4
+	cs.Status.Cells = []bbbv1alpha1.CellStatus{{Name: "cell-3", Phase: bbbv1alpha1.CellProvisioning,
+		PhaseSince: metav1.Now(), Created: metav1.Now()}}
+	w := newWorld(t, cs)
+	got := reconcile(t, w)
+	if phaseOf(got, "cell-3") != bbbv1alpha1.CellProvisioning {
+		t.Fatalf("fresh cell moved: %+v", got.Status.Cells)
+	}
+	if !strings.Contains(got.Status.Cells[0].Waiting, "chart 9.9.9 not carried") {
+		t.Fatalf("waiting does not name the chart: %q", got.Status.Cells[0].Waiting)
+	}
+	if len(got.Status.Cells) != 1 || got.Status.NextCell != 4 {
+		t.Fatalf("grew under mismatch: %+v next=%d", got.Status.Cells, got.Status.NextCell)
+	}
+	// Past the deadline: Failed, reason names the timeout, slot still held.
+	got.Status.Cells[0].PhaseSince = metav1.NewTime(time.Now().Add(-21 * time.Minute))
+	if err := w.c.Status().Update(context.Background(), got); err != nil {
+		t.Fatal(err)
+	}
+	got = reconcile(t, w)
+	if phaseOf(got, "cell-3") != bbbv1alpha1.CellFailed {
+		t.Fatalf("not Failed past the deadline: %+v", got.Status.Cells)
+	}
+	if !strings.Contains(got.Status.Cells[0].Reason, "not Ready within 20m0s") {
+		t.Fatalf("reason does not name the timeout: %q", got.Status.Cells[0].Reason)
+	}
+	if len(got.Status.Cells) != 1 {
+		t.Fatalf("replacement planned: %+v", got.Status.Cells)
+	}
+	cond := meta.FindStatusCondition(got.Status.Conditions, "ReplicasHeldByFailedCell")
+	if cond == nil || cond.Status != metav1.ConditionTrue {
+		t.Fatalf("missing held condition: %+v", got.Status.Conditions)
+	}
+}
+
 func TestUpgradeOldSetDrainsUnderNewController(t *testing.T) {
 	// The spec's upgrade: a new CellSet (the chart this controller carries) has a Registered
 	// cell; the old set (an older chart) is zeroed and must retire its cell - the refusal

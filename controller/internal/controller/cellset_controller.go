@@ -160,8 +160,15 @@ func (r *CellSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		switch cell.Phase {
 		case bbbv1alpha1.CellProvisioning:
 			if !supported {
-				// Cannot be built: this controller does not carry its chart. The provision
-				// deadline will fail it; the operator decides from there.
+				// Cannot be built: this controller does not carry its chart. The same
+				// provision deadline applies here - past it the cell is Failed and the
+				// operator decides from there.
+				if time.Since(cell.PhaseSince.Time) > provisionTimeout(&cs) {
+					cell.Phase = bbbv1alpha1.CellFailed
+					cell.Reason = fmt.Sprintf("not Ready within %s: %s", provisionTimeout(&cs), cell.Waiting)
+					cell.Waiting = ""
+					break
+				}
 				cell.Waiting = fmt.Sprintf("chart %s not carried by this controller", cs.Spec.Version.Chart)
 				wait = true
 				break
