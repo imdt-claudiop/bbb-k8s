@@ -146,7 +146,7 @@ spec:
               AllowUsers spool
               CONF
               exec /usr/sbin/sshd -D -e
-          ports: [ { containerPort: 2222, hostPort: 2222 } ]
+          ports: [ { containerPort: 2222 } ]
           resources:
             requests: { cpu: 25m, memory: 32Mi }
             limits: { cpu: 250m, memory: 128Mi }
@@ -208,3 +208,15 @@ spec:
             items:
               - { key: tls.crt, path: fullchain.pem }
               - { key: tls.key, path: privkey.pem }
+---
+# The spool ingest's name: the cells rsync to spool@spool-ssh.scalelite.svc.cluster.local:2222
+# (the frozen values and the CellSet guide point here).
+apiVersion: v1
+kind: Service
+metadata:
+  name: spool-ssh
+  namespace: scalelite
+spec:
+  selector: { app: scalelite-importer }
+  ports:
+    - { port: 2222, targetPort: 2222 }

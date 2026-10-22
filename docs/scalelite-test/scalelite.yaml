@@ -88,3 +88,17 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim: { claimName: scalelite-redis }
+---
+# Public entry: the guide's step 2 waits on this Service's EXTERNAL-IP (the host derives from
+# it on the lab resolver) before the app manifests are applied.
+apiVersion: v1
+kind: Service
+metadata:
+  name: scalelite-nginx
+  namespace: scalelite
+spec:
+  type: LoadBalancer
+  selector: { app: scalelite-nginx }
+  ports:
+    - { name: https, port: 443, targetPort: 443 }
+    - { name: http, port: 80, targetPort: 80 }
