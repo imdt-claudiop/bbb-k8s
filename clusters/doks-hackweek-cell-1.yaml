@@ -20,3 +20,13 @@ livekit:
         includes:
           - 142.93.115.37/32
           - 10.116.0.0/20
+# Recording delivery to the lab Scalelite (namespace scalelite in this cluster): the spool is
+# the Service spool-ssh next to the importer. The SSH key is the Secret scalelite-spool-ssh,
+# copied from scalelite/spool-ssh-client-key.
+recording:
+  scalelite:
+    spool:
+      host: spool@spool-ssh.scalelite.svc.cluster.local
+      path: /var/bigbluebutton/spool
+      namespace: scalelite
+      port: 2222

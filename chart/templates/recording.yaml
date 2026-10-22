@@ -159,7 +159,10 @@ spec:
             - -c
             - |
               set -u
-              opts="-i /ssh/id -p $SPOOL_PORT"
+              # A private copy of the key: the pod's fsGroup makes the Secret's files group-
+              # readable, and ssh refuses a key with open permissions.
+              cp /ssh/id /tmp/ssh-id && chmod 600 /tmp/ssh-id
+              opts="-i /tmp/ssh-id -p $SPOOL_PORT"
               if [ -f /ssh/known_hosts ]; then
                 opts="$opts -o UserKnownHostsFile=/ssh/known_hosts -o StrictHostKeyChecking=yes"
               else

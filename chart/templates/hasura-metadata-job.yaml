@@ -1,12 +1,13 @@
 # The official graphql-server image applies its metadata at start, but `metadata apply` only
 # warns on inconsistencies. This Job keeps the check the chart had: once Hasura is up, reload the
 # metadata and fail unless it is consistent. It uses hasura-cli from the same image. Plain
-# resource keyed on the schema and the image tag: a recreated bbb_graphql or a new image re-runs
+# resource keyed on the schema, the image tag, the chart version and the cell placement
+# (everything its immutable template carries): a recreated bbb_graphql or a new image re-runs
 # it, an unchanged release does not.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: hasura-metadata-{{ printf "%s%s" .Values.bootstrap.schemaSha .Values.officialImages.tag | sha256sum | trunc 8 }}
+  name: hasura-metadata-{{ printf "%s%s%s%s" .Values.bootstrap.schemaSha .Values.officialImages.tag .Chart.Version (include "bbb.cellPlacement" .) | sha256sum | trunc 8 }}
   labels:
     {{- include "bbb.labels" . | nindent 4 }}
     {{- include "bbb.selector" "hasura-metadata" | nindent 4 }}

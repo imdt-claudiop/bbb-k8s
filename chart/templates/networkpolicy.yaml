@@ -229,8 +229,16 @@ spec:
   policyTypes: ["Egress"]
   egress:
     - to:
+        {{- if $spool.namespace }}
+        {{- /* In-cluster spool: CIDR rules do not match cluster destinations under Cilium
+               (measured on DOKS), the namespace peer does. */}}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $spool.namespace }}
+        {{- else }}
         - ipBlock:
-            cidr: {{ required "recording.scalelite.spool.cidr is empty: the spool host as a CIDR, for the egress rule" $spool.cidr }}
+            cidr: {{ required "recording.scalelite.spool.cidr is empty: the spool host as a CIDR (outside the cluster), or set recording.scalelite.spool.namespace (inside)" $spool.cidr }}
+        {{- end }}
       ports:
         - { protocol: TCP, port: {{ $spool.port }} }
 {{- end }}
