@@ -1,0 +1,269 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: cellsets.bbb-k8s.imdt.dev
+spec:
+  group: bbb-k8s.imdt.dev
+  names:
+    kind: CellSet
+    listKind: CellSetList
+    plural: cellsets
+    shortNames:
+    - cs
+    singular: cellset
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.replicas
+      name: Replicas
+      type: integer
+    - jsonPath: .status.replicas
+      name: Serving
+      type: integer
+    - jsonPath: .status.nextCell
+      name: Next
+      type: integer
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: CellSet is a set of BigBlueButton cells of one version behind
+          one balancer.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: CellSetSpec describes a set of cells of one version (phase
+              2 spec).
+            properties:
+              balancer:
+                description: BalancerSpec names the balancer in front of the cells.
+                properties:
+                  kind:
+                    enum:
+                    - scalelite
+                    type: string
+                  secretRef:
+                    description: |-
+                      Secret in the CellSet's namespace with the API credential (scalelite: key
+                      loadbalancer-secret). Never copied to cells.
+                    type: string
+                  url:
+                    description: 'Base URL of the balancer''s admin API (scalelite:
+                      https://host/scalelite/api).'
+                    type: string
+                required:
+                - kind
+                - secretRef
+                - url
+                type: object
+              host:
+                description: HostSpec shapes each cell's public host.
+                properties:
+                  template:
+                    description: |-
+                      Go template over {{.index}} (the cell number) and {{.ip}} (the cell's LoadBalancer IP
+                      with dashes). With {{.ip}}, the cell is installed with a provisional host first and
+                      upgraded once the IP exists, as in phase 1.
+                    type: string
+                  tlsSecretRef:
+                    description: |-
+                      TLS Secret (kubernetes.io/tls) in the CellSet's namespace covering the cells' hosts;
+                      copied to each cell.
+                    type: string
+                required:
+                - template
+                - tlsSecretRef
+                type: object
+              provisionTimeout:
+                default: 20m
+                description: How long Provisioning or Ready may take before the cell
+                  is Failed. Default 20m.
+                type: string
+              recordingSecretRef:
+                description: |-
+                  Recording delivery credential, copied to every cell as the Secret named by the frozen
+                  values (recording.scalelite.sshKeySecret); common to all cells, like the TLS one.
+                  Empty: nothing copied.
+                type: string
+              replicas:
+                description: |-
+                  Cells that should serve, written by the operator (or an autoscaler through the scale
+                  subresource).
+                format: int32
+                minimum: 0
+                type: integer
+              version:
+                description: 'VersionSpec pins the cell version: the chart at a commit
+                  plus the frozen values.'
+                properties:
+                  chart:
+                    description: |-
+                      Chart version the cells run. The controller carries the chart of the commit it was
+                      built from and refuses a mismatch (publishing charts to a registry is later work).
+                    type: string
+                  valuesRef:
+                    description: |-
+                      ConfigMap (key values.yaml) with the frozen copy of the values, in the CellSet's
+                      namespace.
+                    type: string
+                required:
+                - chart
+                - valuesRef
+                type: object
+            required:
+            - balancer
+            - host
+            - replicas
+            - version
+            type: object
+          status:
+            description: CellSetStatus is the observed state.
+            properties:
+              cells:
+                description: Cells this set owns, Retired ones pruned.
+                items:
+                  description: CellStatus is one cell as the controller last saw it.
+                  properties:
+                    created:
+                      format: date-time
+                      type: string
+                    host:
+                      description: Public host, once rendered.
+                      type: string
+                    name:
+                      description: Name is the cell's namespace (cell-<n>), never
+                        reused.
+                      type: string
+                    phase:
+                      description: CellPhase is a cell's lifecycle state. Six states,
+                        no way back after Retiring.
+                      enum:
+                      - Provisioning
+                      - Ready
+                      - Registered
+                      - Retiring
+                      - Retired
+                      - Failed
+                      type: string
+                    phaseSince:
+                      description: |-
+                        When the current phase was entered (drives the provision timeout and the retirement
+                        tie-break by age uses Created).
+                      format: date-time
+                      type: string
+                    reason:
+                      description: Why the cell Failed, for the operator.
+                      type: string
+                    waiting:
+                      description: What Retiring still waits for, for the operator
+                        ("meetings=2", "recordings pending").
+                      type: string
+                  required:
+                  - name
+                  - phase
+                  type: object
+                type: array
+              conditions:
+                description: Human-readable refusals and notes (e.g. the refusal to
+                  zero the only registered set).
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              nextCell:
+                description: |-
+                  The number of the next cell to be created: the operator labels and taints its node
+                  pool (bbb-k8s/cell=<n>) before scaling (decision A: a global, ever-increasing
+                  counter; names are never reused).
+                format: int32
+                type: integer
+              replicas:
+                description: |-
+                  Cells that serve or will serve: Provisioning, Ready and Registered (not Retiring,
+                  Retired or Failed).
+                format: int32
+                type: integer
+              selector:
+                description: Selector for the scale subresource (HPA contract).
+                type: string
+            required:
+            - replicas
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      scale:
+        labelSelectorPath: .status.selector
+        specReplicasPath: .spec.replicas
+        statusReplicasPath: .status.replicas
+      status: {}
