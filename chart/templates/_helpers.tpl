@@ -53,12 +53,12 @@ tolerations:
 {{- end }}
 
 {{/* Job name keyed on everything its template carries (the schema sha, the bootstrap script, the
-     Postgres image and the official image tag of its init containers, the chart version of the
-     labels, the cell placement): Job templates are immutable, so a template change under the
-     same name fails the upgrade. A new name re-runs the bootstrap, which keeps bbb_graphql when
-     the marker matches. */}}
+     Postgres image, the registry and tag of the official images of its init containers, the
+     bbb-db Secret name, the chart version of the labels, the cell placement): Job templates are
+     immutable, so a template change under the same name fails the upgrade. A new name re-runs
+     the bootstrap, which keeps bbb_graphql when the marker matches. */}}
 {{- define "bbb.bootstrapJobName" -}}
-bbb-bootstrap-{{ printf "%s%s%s%s%s%s" .Values.bootstrap.schemaSha (.Files.Get "scripts/bootstrap.sh") .Values.postgres.image .Values.officialImages.tag .Chart.Version (include "bbb.cellPlacement" .) | sha256sum | trunc 8 }}
+bbb-bootstrap-{{ printf "%s%s%s%s%s%s%s%s" .Values.bootstrap.schemaSha (.Files.Get "scripts/bootstrap.sh") .Values.postgres.image .Values.officialImages.registry .Values.officialImages.tag .Values.secrets.db .Chart.Version (include "bbb.cellPlacement" .) | sha256sum | trunc 8 }}
 {{- end }}
 
 {{- define "bbb.dbPasswordEnv" -}}

@@ -316,8 +316,9 @@ SFU webhook of every cell. Accepted for now; restricting them by node label is l
 
 ### Recording delivery to a Scalelite spool
 
-Off by default. With `recording.scalelite.spool.host` set (plus `path`, `cidr` and, when not
-22, `port`), every published recording is packed into a tar and delivered to that host, the
+Off by default. With `recording.scalelite.spool.host` set (plus `path`, `port` when not 22,
+and one of `cidr` or `namespace`, below), every published recording is packed into a tar and
+delivered to that host, the
 spool a Scalelite imports from (`recordings:watch`, which deletes the tar after the import;
 Scalelite serves the playback from then on). The pieces, all in the recording pod:
 
@@ -327,8 +328,11 @@ Scalelite serves the playback from then on). The pieces, all in the recording po
 - the `spool-transfer` sidecar rsyncs every finished tar there to `host:path` over SSH and
   removes it on success (a failed transfer is retried; the official record-and-playback image
   has rsync but no SSH client, hence the sidecar);
-- the `recording-spool` NetworkPolicy opens the recording pod's egress to `cidr` on `port`,
-  the only external destination it may reach.
+- the `recording-spool` NetworkPolicy opens the recording pod's egress to the spool on
+  `port`, its only destination besides Redis and DNS. Set one of the two peer forms: `cidr`
+  for a spool outside the cluster (the host as a CIDR), or `namespace` for one inside it (a
+  Service name as the host) - CIDR rules do not match in-cluster destinations under Cilium
+  (measured on DOKS). The namespace form wins when both are set.
 
 The SSH key is a Secret the operator creates once and copies to each cell's namespace, never
 in values or in this repository:

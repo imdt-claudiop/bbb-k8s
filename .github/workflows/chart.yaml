@@ -36,10 +36,14 @@ jobs:
           for n in 1 2; do
             helm template bbb chart -n "cell-$n" -f "clusters/doks-hackweek-cell-$n.yaml" > "out/cell-$n.yaml"
           done
+          # The external-spool (ipBlock/CIDR) form; the cell-1 file itself covers the
+          # in-cluster namespace form, which wins when both are set.
           helm template bbb chart -n cell-1 -f clusters/doks-hackweek-cell-1.yaml \
             --set recording.scalelite.spool.host=scalelite-spool@203.0.113.10 \
             --set recording.scalelite.spool.path=/var/bigbluebutton/spool \
-            --set recording.scalelite.spool.cidr=203.0.113.10/32 > out/cell-1-scalelite.yaml
+            --set recording.scalelite.spool.cidr=203.0.113.10/32 \
+            --set recording.scalelite.spool.namespace='' > out/cell-1-scalelite.yaml
+          grep -A2 "ipBlock" out/cell-1-scalelite.yaml | grep -q "cidr: 203.0.113.10/32"
           # Two cells, two load balancers.
           test "$(grep -h do-loadbalancer-name out/cell-1.yaml out/cell-2.yaml | sort -u | wc -l)" = 2
       - name: kubeconform
