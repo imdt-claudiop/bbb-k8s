@@ -18,7 +18,12 @@ by version) is planned, not built.
 - Run locally against a kubeconfig (the PoC path):
   `go run ./cmd --chart ../chart --vpc-cidr <the nodes' VPC range>`.
 - In-cluster: build the image at the REPO ROOT (`docker build -f controller/Dockerfile .`),
-  then apply `config/crd` and `config/manager`. No published image yet.
+  push it PRIVATE to ghcr (`ghcr.io/imdt-claudiop/bbb-k8s-controller:<sha>`; the repository is
+  private, so the image must be too), create the `ghcr-pull` docker-registry Secret in the
+  controller namespace, then apply `config/crd` and `config/manager` (set the image tag and a
+  nodeSelector for the cluster's shared-services pool). The controller reaches the cells'
+  public hosts from inside the cluster, so each cell's frozen values must admit its namespace
+  in `nginx.clientNamespaces` (e.g. `[scalelite, bbb-k8s-controller]`).
 
 What the operator provides per CellSet, in its namespace: the frozen values ConfigMap
 (`spec.version.valuesRef`, key `values.yaml`, without per-cell values), the TLS Secret

@@ -24,9 +24,16 @@ spec:
     metadata: { labels: { app: bbb-k8s-controller } }
     spec:
       serviceAccountName: bbb-k8s-controller
+      # The image is PRIVATE on ghcr (the repository is private; the code never goes public):
+      # docker build -f controller/Dockerfile -t ghcr.io/imdt-claudiop/bbb-k8s-controller:<sha> .
+      # docker push ...; kubectl -n bbb-k8s-controller create secret docker-registry ghcr-pull ...
+      # Add a nodeSelector for the cluster's shared-services pool so the controller never lands
+      # on cell nodes (their taints already repel it; the selector pins it).
+      imagePullSecrets:
+        - name: ghcr-pull
       containers:
         - name: controller
-          image: bbb-k8s-controller:dev   # no published image yet; see controller/README.md
+          image: ghcr.io/imdt-claudiop/bbb-k8s-controller:latest  # pin a sha tag per deploy
           args: ["--vpc-cidr", "10.116.0.0/20"]
           resources:
             requests: { cpu: 100m, memory: 128Mi }
