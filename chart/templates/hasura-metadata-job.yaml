@@ -1,14 +1,14 @@
 # The official graphql-server image applies its metadata at start, but `metadata apply` only
 # warns on inconsistencies. This Job keeps the check the chart had: once Hasura is up, reload the
 # metadata and fail unless it is consistent. It uses hasura-cli from the same image. Plain
-# resource keyed on the schema, the registry and tag of the official images, the bbb-db and
-# bbb-hasura Secret names, the chart version and the cell placement (everything its immutable
-# template carries): a recreated bbb_graphql or a new image re-runs it, an unchanged release
-# does not.
+# resource keyed on the schema, the registry and tag of the official images, the Postgres
+# image of the wait-bootstrap init container, the bbb-db and bbb-hasura Secret names, the
+# chart version and the cell placement (everything its immutable template carries): a
+# recreated bbb_graphql or a new image re-runs it, an unchanged release does not.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: hasura-metadata-{{ printf "%s%s%s%s%s%s%s" .Values.bootstrap.schemaSha .Values.officialImages.registry .Values.officialImages.tag .Values.secrets.db .Values.secrets.hasura .Chart.Version (include "bbb.cellPlacement" .) | sha256sum | trunc 8 }}
+  name: hasura-metadata-{{ printf "%s%s%s%s%s%s%s%s" .Values.bootstrap.schemaSha .Values.officialImages.registry .Values.officialImages.tag .Values.postgres.image .Values.secrets.db .Values.secrets.hasura .Chart.Version (include "bbb.cellPlacement" .) | sha256sum | trunc 8 }}
   labels:
     {{- include "bbb.labels" . | nindent 4 }}
     {{- include "bbb.selector" "hasura-metadata" | nindent 4 }}
