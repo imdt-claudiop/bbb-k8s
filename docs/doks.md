@@ -57,7 +57,8 @@ also accepts media over TCP 443 of the media node, which is already open.
 
 ## 5. Write the cluster values
 
-Create `clusters/<cluster>.yaml`, as `clusters/doks-hackweek.yaml`:
+Create `clusters/<cluster>.yaml`, as `clusters/doks-hackweek.yaml` (one cell; for several, one
+file per cell as `clusters/doks-hackweek-cell-<n>.yaml`, see "Several cells" below):
 
 - `livekit.nodeIP`: the EXTERNAL-IP of the node labelled `bbb-k8s/role=media`;
 - `livekit.config.rtc.ips.includes`: that IP as `/32`, plus the VPC range of the nodes (the

@@ -1,8 +1,7 @@
 # Static checks of the chart and the shell scripts: the chart must lint and render to manifests
 # the Kubernetes API accepts (the Cilium CRDs included, through the CRDs catalog), with the values
-# of both clusters: DOKS (Cilium policies) and k3s-local (plain policies, extra CA), and the DOKS
-# values as two new cells of one cluster (namespaces cell-1 and cell-2, values cell, without the
-# load balancer name the existing cell of that cluster keeps). Nothing here
+# of both clusters: DOKS (Cilium policies) and k3s-local (plain policies, extra CA), and the two
+# cells of the DOKS cluster (namespaces cell-1 and cell-2). Nothing here
 # needs a cluster; `helm test` (docs/install.md "Checking an install") covers a running one.
 name: chart
 on:
@@ -25,8 +24,7 @@ jobs:
             helm lint --strict chart -n bbb -f "clusters/$c.yaml"
           done
           for n in 1 2; do
-            helm lint --strict chart -n "cell-$n" -f clusters/doks-hackweek.yaml --set cell=$n \
-              --set 'nginx.service.annotations.service\.beta\.kubernetes\.io/do-loadbalancer-name=null'
+            helm lint --strict chart -n "cell-$n" -f "clusters/doks-hackweek-cell-$n.yaml"
           done
       - name: render
         run: |
@@ -35,9 +33,7 @@ jobs:
             helm template bbb chart -n bbb -f "clusters/$c.yaml" > "out/$c.yaml"
           done
           for n in 1 2; do
-            helm template bbb chart -n "cell-$n" -f clusters/doks-hackweek.yaml --set cell=$n \
-              --set 'nginx.service.annotations.service\.beta\.kubernetes\.io/do-loadbalancer-name=null' \
-              > "out/cell-$n.yaml"
+            helm template bbb chart -n "cell-$n" -f "clusters/doks-hackweek-cell-$n.yaml" > "out/cell-$n.yaml"
           done
           # Two cells, two load balancers.
           test "$(grep -h do-loadbalancer-name out/cell-1.yaml out/cell-2.yaml | sort -u | wc -l)" = 2

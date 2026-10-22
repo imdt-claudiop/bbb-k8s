@@ -1,6 +1,6 @@
-# Values of the DOKS hackweek cluster (NYC1). Non-secret; written from scripts/public-host.sh
-# after the LoadBalancer of svc/bbb-nginx got its IP. A reinstall that recreates the
-# LoadBalancer gets a new IP: run the script again and update this line.
+# Values of the single phase 1 cell of the DOKS hackweek cluster (NYC1), namespace bbb. That
+# install was removed on 2026-10-22; the cluster now runs two cells (doks-hackweek-cell-1.yaml,
+# doks-hackweek-cell-2.yaml). Kept as the single-cell example CI renders.
 publicHost: bbbk8s-ip-165-245-153-14.bbb.imdt.dev
 livekit:
   # Pods reach the media node at its VPC address, not at nodeIP: plain policies by nodeIP would
@@ -17,13 +17,3 @@ livekit:
         includes:
           - 142.93.115.37/32
           - 10.116.0.0/20
-# The cell installed here before the chart supported several cells keeps what it was created
-# with: the storage class of a volume claim cannot change, and the load balancer keeps its name.
-postgres: { storageClass: do-block-storage-retain }
-redis: { storageClass: do-block-storage-retain }
-bbbData: { storageClass: do-block-storage-retain }
-webrtcRecorder: { storageClass: do-block-storage-retain }
-nginx:
-  service:
-    annotations:
-      service.beta.kubernetes.io/do-loadbalancer-name: bbb-k8s

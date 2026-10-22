@@ -1,0 +1,22 @@
+# Cell 2 of the DOKS hackweek cluster (NYC1), namespace cell-2: helm upgrade --install bbb chart
+# -n cell-2 --reset-values -f clusters/doks-hackweek-cell-2.yaml. Non-secret. Its nodes carry
+# bbb-k8s/cell=2, one bbb-k8s/role each, and the taint bbb-k8s/cell=2:NoSchedule (docs/doks.md,
+# "Several cells").
+cell: "2"
+# Written from scripts/public-host.sh (NS=cell-2 IP_DOMAIN=bbb.imdt.dev PREFIX=cell2) after the
+# load balancer got its IP. A reinstall that recreates the load balancer gets a new IP: run the
+# script again and update this line.
+publicHost: cell2-ip-129-212-138-233.bbb.imdt.dev
+livekit:
+  # Pods reach the media node at its VPC address, not at nodeIP: plain policies by nodeIP would
+  # block LiveKit's flows.
+  networkPolicy: cilium
+  # ExternalIP of the cell's media node (temp-hackweek-3bi183). A replaced node gets a new IP: update it.
+  nodeIP: 198.211.105.193
+  config:
+    rtc:
+      # Announce only the media node's public IP and its VPC address (the recorder's path).
+      ips:
+        includes:
+          - 198.211.105.193/32
+          - 10.116.0.0/20

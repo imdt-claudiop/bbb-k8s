@@ -149,9 +149,10 @@ the cell number (never reused):
    gets its own database passwords, shared secret, Hasura and LiveKit secrets.
 3. **Values**: `cell: "<n>"`, the cell's `publicHost`, and its media node's `livekit.nodeIP`
    and `livekit.config.rtc.ips.includes`, e.g. in `clusters/<cluster>-cell-<n>.yaml`.
-4. **Install**: `helm upgrade --install bbb chart -n cell-<n> --reset-values -f
-   clusters/<cluster>-cell-<n>.yaml`, then `NS=cell-<n> PUBLIC_HOST=... scripts/public-host.sh`
-   and `helm test bbb -n cell-<n>`.
+4. **Install**: as in "Install" above, with `-n cell-<n>` and `NS=cell-<n>` (lab path:
+   `PREFIX=cell<n>` too, so each cell's name says which cell it is).
+   `clusters/doks-hackweek-cell-1.yaml` and `clusters/doks-hackweek-cell-2.yaml` are the two
+   cells of the lab cluster.
 
 With `cell` set, every pod of the release selects the cell's nodes and tolerates its taint;
 the taint keeps other workloads off them. The load balancer is named `bbb-k8s-<namespace>`.
@@ -398,8 +399,8 @@ kubectl delete namespace bbb
 With the default storage class (`do-block-storage`, reclaim policy `Delete`), uninstalling
 removes the volume claims (the Postgres and Redis StatefulSets delete theirs with the release)
 and the CSI driver removes the cloud volumes with them. With a `Retain` class
-(`do-block-storage-retain`, as `clusters/doks-hackweek.yaml` keeps for the cell it already
-runs) the PersistentVolumes stay `Released` and the cloud volumes are still billed.
+(`do-block-storage-retain`) the PersistentVolumes stay `Released` and the cloud volumes are
+still billed.
 Reinstalling creates new volumes and does not reuse them. When the data is no longer needed,
 switch them to `Delete` so the CSI driver removes the cloud volumes together with the PVs:
 

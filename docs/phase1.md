@@ -101,8 +101,7 @@ Images without a registry prefix are `officialImages.registry` with `officialIma
 The default storage class is `do-block-storage` (`chart/values.yaml`, `storageClass` keys,
 reclaim policy `Delete`), and the Postgres and Redis StatefulSets delete their claims with the
 release (`persistentVolumeClaimRetentionPolicy`): the volumes die with the cell (install.md,
-"Uninstall and cleanup"). `clusters/doks-hackweek.yaml` keeps `do-block-storage-retain` for the
-cell it already runs.
+"Uninstall and cleanup").
 
 ## 5. Invariants
 
