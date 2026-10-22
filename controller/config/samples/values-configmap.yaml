@@ -1,0 +1,25 @@
+# The frozen values of one CellSet version: everything cell-agnostic. The controller owns the
+# per-cell values (cell, publicHost, livekit.nodeIP and rtc.ips.includes) and merges them on
+# top. Changing this content is a new version: a new ConfigMap for a new CellSet, never an
+# edit under a running one.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bbb-41-values
+  namespace: cellsets
+data:
+  values.yaml: |
+    livekit:
+      networkPolicy: cilium
+    nginx:
+      # In-cluster clients of the cells' public entry, admitted by namespace: the balancer
+      # that polls the cells and the controller itself (pod traffic to a cell's LoadBalancer
+      # IP is short-circuited to the nginx pod, where the public ipBlock rule cannot match).
+      clientNamespaces: [scalelite, bbb-k8s-controller]
+    recording:
+      scalelite:
+        spool:
+          host: spool@spool-ssh.scalelite.svc.cluster.local
+          path: /var/bigbluebutton/spool
+          namespace: scalelite   # in-cluster spool; use cidr instead for an external host
+          port: 2222

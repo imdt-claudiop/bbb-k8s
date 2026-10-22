@@ -10,9 +10,10 @@ itself go upstream as pull requests; this repository only holds the packaging.
 | Path | Contents |
 |---|---|
 | `chart/` | Helm chart (`appVersion` = BigBlueButton line) |
+| `controller/` | The cell controller: CRD `CellSet` + operator ([controller/README.md](controller/README.md)) |
 | `scripts/` | Cluster helpers (`create-secrets.sh`, `public-host.sh`, `sync-upstream.sh`) |
-| `docs/` | Phase 1 specification, install and operation runbooks |
-| `.github/workflows/` | Static checks: helm lint, kubeconform, shellcheck |
+| `docs/` | Phase 1 and 2 specifications, install and operation runbooks |
+| `.github/workflows/` | Static checks: helm lint, kubeconform, shellcheck, controller tests |
 
 Current state: one complete BigBlueButton 4.1 cell per release, one release per namespace: Postgres,
 Redis, the database bootstrap Job, akka-apps, the GraphQL stack (Hasura, graphql-actions,
@@ -30,10 +31,16 @@ tests).
 
 Three phases:
 
-1. **One cell on Kubernetes**: this repository today ([docs/phase1.md](docs/phase1.md)).
-2. **Multiple cells**: in progress. The chart installs once per namespace; the controller that
-   adds and retires cells behind a load balancer (Scalelite) comes next.
+1. **One cell on Kubernetes** ([docs/phase1.md](docs/phase1.md)).
+2. **Multiple cells** ([docs/phase2.md](docs/phase2.md)): the chart installs once per
+   namespace, and the `CellSet` controller adds and retires cells behind the balancer the
+   integrator already uses (Scalelite in the PoC) - `kubectl scale cellset` is the knob
+   ([controller/README.md](controller/README.md)).
 3. **Architectural improvements, fault tolerance and scale.**
+
+Phase 2 is additive: a phase 1 install - one release, by hand, no controller - keeps working
+exactly as before (a single-cell cluster does not even set the `cell` value). The controller
+and the multi-cell values only enter when a cluster runs more than one cell.
 
 ## Images
 

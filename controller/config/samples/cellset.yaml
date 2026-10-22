@@ -1,0 +1,32 @@
+# A CellSet: one set of cells of one version behind one balancer. Copy, rename and adjust.
+# Prerequisites in the CellSet's namespace: the frozen values ConfigMap (values-configmap.yaml),
+# the TLS Secret, the balancer credential and (with recording delivery) the spool SSH key -
+# the exact kubectl commands are in controller/README.md, "What the operator provides".
+apiVersion: bbb-k8s.imdt.dev/v1alpha1
+kind: CellSet
+metadata:
+  name: bbb-41
+  namespace: cellsets
+  annotations:
+    # Only when adopting a cluster whose cell history predates the controller: seed the
+    # global counter so numbers of deleted cells are never reused (status.nextCell tells the
+    # operator which node pool to label next).
+    bbb-k8s.imdt.dev/next-cell: "1"
+spec:
+  replicas: 1                        # written by the operator (or kubectl scale cellset)
+  provisionTimeout: 20m
+  version:
+    chart: 0.5.0                     # must match the chart this controller build carries
+    valuesRef: bbb-41-values         # ConfigMap with the frozen copy of the values
+  host:
+    # {{.index}} = the cell number; {{.ip}} = the cell's LoadBalancer IP with dashes (the
+    # cell is installed with a provisional host first and upgraded once the IP exists).
+    template: "cell{{.index}}-ip-{{.ip}}.bbb.example.com"
+    tlsSecretRef: bbb-wildcard-tls   # covers every cell host; copied to each cell
+  balancer:
+    kind: scalelite
+    url: https://scalelite.example.com/scalelite/api
+    secretRef: scalelite-api         # key loadbalancer-secret; never copied to cells
+  # Optional: the SSH key for recording delivery, copied to every cell under the name the
+  # frozen values set in recording.scalelite.sshKeySecret.
+  recordingSecretRef: spool-ssh

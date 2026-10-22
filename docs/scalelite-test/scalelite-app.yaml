@@ -1,0 +1,210 @@
+# The Rails side: api (runs db create/migrate at start - bin/start), poller and the recording
+# importer, plus the SSH ingest of the spool and the public nginx.
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: scalelite-env, namespace: scalelite }
+data:
+  URL_HOST: "SCALELITE_HOST"
+  DATABASE_URL: "postgres://postgres@scalelite-postgres:5432/scalelite"
+  REDIS_URL: "redis://scalelite-redis:6379"
+---
+apiVersion: v1
+kind: Service
+metadata: { name: scalelite-api, namespace: scalelite }
+spec: { selector: { app: scalelite-api }, ports: [ { port: 3000 } ] }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: scalelite-api, namespace: scalelite }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: scalelite-api } }
+  template:
+    metadata: { labels: { app: scalelite-api } }
+    spec:
+      enableServiceLinks: false
+      nodeSelector: { doks.digitalocean.com/node-pool: SERVICES_POOL }
+      initContainers:
+        # The shared recording tree, as sharedvolume-README.md: spool 1000:2000 mode 0775
+        # (the cells' rsync user writes there), the rest scalelite's own (uid 1000).
+        - name: tree
+          image: postgres:16
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              cd /var/bigbluebutton
+              mkdir -p spool published unpublished recording/scalelite
+              chown 1000:2000 spool && chmod 0775 spool
+              chown -R 1000:1000 published unpublished recording
+          volumeMounts: [ { name: recordings, mountPath: /var/bigbluebutton } ]
+      containers:
+        - name: api
+          image: blindsidenetwks/scalelite:v1.8.6-api
+          envFrom: [ { configMapRef: { name: scalelite-env } } ]
+          env:
+            - name: SECRET_KEY_BASE
+              valueFrom: { secretKeyRef: { name: scalelite-secrets, key: secret-key-base } }
+            - name: LOADBALANCER_SECRET
+              valueFrom: { secretKeyRef: { name: scalelite-secrets, key: loadbalancer-secret } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: scalelite-secrets, key: postgres-password } }
+            - name: DATABASE_URL
+              value: "postgres://postgres:$(PGPASSWORD)@scalelite-postgres:5432/scalelite"
+          ports: [ { containerPort: 3000 } ]
+          readinessProbe:
+            tcpSocket: { port: 3000 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          volumeMounts: [ { name: recordings, mountPath: /var/bigbluebutton } ]
+      volumes:
+        - name: recordings
+          persistentVolumeClaim: { claimName: scalelite-recordings }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: scalelite-poller, namespace: scalelite }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: scalelite-poller } }
+  template:
+    metadata: { labels: { app: scalelite-poller } }
+    spec:
+      enableServiceLinks: false
+      nodeSelector: { doks.digitalocean.com/node-pool: SERVICES_POOL }
+      containers:
+        - name: poller
+          image: blindsidenetwks/scalelite:v1.8.6-poller
+          envFrom: [ { configMapRef: { name: scalelite-env } } ]
+          env:
+            - name: SECRET_KEY_BASE
+              valueFrom: { secretKeyRef: { name: scalelite-secrets, key: secret-key-base } }
+            - name: LOADBALANCER_SECRET
+              valueFrom: { secretKeyRef: { name: scalelite-secrets, key: loadbalancer-secret } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: scalelite-secrets, key: postgres-password } }
+            - name: DATABASE_URL
+              value: "postgres://postgres:$(PGPASSWORD)@scalelite-postgres:5432/scalelite"
+          resources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: scalelite-importer, namespace: scalelite }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: scalelite-importer } }
+  template:
+    metadata: { labels: { app: scalelite-importer } }
+    spec:
+      enableServiceLinks: false
+      nodeSelector: { doks.digitalocean.com/node-pool: SERVICES_POOL }
+      containers:
+        - name: importer
+          image: blindsidenetwks/scalelite:v1.8.6-recording-importer
+          envFrom: [ { configMapRef: { name: scalelite-env } } ]
+          env:
+            - name: SECRET_KEY_BASE
+              valueFrom: { secretKeyRef: { name: scalelite-secrets, key: secret-key-base } }
+            - name: LOADBALANCER_SECRET
+              valueFrom: { secretKeyRef: { name: scalelite-secrets, key: loadbalancer-secret } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: scalelite-secrets, key: postgres-password } }
+            - name: DATABASE_URL
+              value: "postgres://postgres:$(PGPASSWORD)@scalelite-postgres:5432/scalelite"
+          resources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits: { cpu: 500m, memory: 768Mi }
+          volumeMounts: [ { name: recordings, mountPath: /var/bigbluebutton } ]
+        # SSH ingest of the spool: the cells' recording sidecars rsync tars here. Alpine +
+        # openssh/rsync installed at start (lab bench; the user spool is uid 1000, the spool
+        # dir owner, so the importer can delete what lands).
+        - name: spool-ssh
+          image: alpine:3.20
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              apk add --no-cache openssh-server rsync >/dev/null
+              addgroup -g 2000 scalelite-spool 2>/dev/null || true
+              adduser -D -u 1000 -G scalelite-spool -s /bin/sh spool 2>/dev/null || true
+              sed -i 's/^spool:!/spool:*/' /etc/shadow
+              mkdir -p /home/spool/.ssh
+              cp /ssh-auth/authorized_keys /home/spool/.ssh/authorized_keys
+              chown -R spool /home/spool/.ssh && chmod 700 /home/spool/.ssh && chmod 600 /home/spool/.ssh/authorized_keys
+              mkdir -p /etc/ssh/keys && cp /ssh-host/ssh_host_ed25519_key /etc/ssh/keys/ && chmod 600 /etc/ssh/keys/ssh_host_ed25519_key
+              cat > /etc/ssh/sshd_config <<CONF
+              Port 2222
+              HostKey /etc/ssh/keys/ssh_host_ed25519_key
+              PasswordAuthentication no
+              AllowUsers spool
+              CONF
+              exec /usr/sbin/sshd -D -e
+          ports: [ { containerPort: 2222, hostPort: 2222 } ]
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits: { cpu: 250m, memory: 128Mi }
+          volumeMounts:
+            - { name: recordings, mountPath: /var/bigbluebutton }
+            - { name: ssh-auth, mountPath: /ssh-auth, readOnly: true }
+            - { name: ssh-host, mountPath: /ssh-host, readOnly: true }
+      volumes:
+        - name: recordings
+          persistentVolumeClaim: { claimName: scalelite-recordings }
+        - name: ssh-auth
+          secret: { secretName: spool-ssh-authorized }
+        - name: ssh-host
+          secret: { secretName: spool-ssh-hostkey }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: scalelite-nginx, namespace: scalelite }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: scalelite-nginx } }
+  template:
+    metadata: { labels: { app: scalelite-nginx } }
+    spec:
+      enableServiceLinks: false
+      nodeSelector: { doks.digitalocean.com/node-pool: SERVICES_POOL }
+      initContainers:
+        # The playback player: Scalelite's nginx serves it from /var/bigbluebutton/playback
+        # (installing it on the Scalelite host is part of a Scalelite install); the canonical
+        # source is the official bbb-playback image of the same BBB line as the cells.
+        - name: player
+          image: ghcr.io/bigbluebutton/bigbluebutton/bbb-playback:v4.1.x-develop-5b80a5b
+          # Root: the image's own user cannot write the volume root.
+          securityContext: { runAsUser: 0, runAsGroup: 0 }
+          command: ["sh", "-c", "mkdir -p /vol/playback && cp -r /var/bigbluebutton/playback/presentation /vol/playback/ && chmod -R a+rX /vol/playback"]
+          volumeMounts: [ { name: recordings, mountPath: /vol } ]
+      containers:
+        - name: nginx
+          image: blindsidenetwks/scalelite:v1.8.6-nginx
+          env:
+            - { name: URL_HOST, value: "SCALELITE_HOST" }
+            - { name: NGINX_SSL, value: "true" }
+          ports: [ { containerPort: 443 }, { containerPort: 80 } ]
+          readinessProbe:
+            tcpSocket: { port: 443 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          volumeMounts:
+            - { name: recordings, mountPath: /var/bigbluebutton, readOnly: true }
+            - { name: tls, mountPath: /etc/nginx/ssl/live/SCALELITE_HOST, readOnly: true }
+      volumes:
+        - name: recordings
+          persistentVolumeClaim: { claimName: scalelite-recordings }
+        - name: tls
+          secret:
+            secretName: scalelite-tls
+            items:
+              - { key: tls.crt, path: fullchain.pem }
+              - { key: tls.key, path: privkey.pem }

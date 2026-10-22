@@ -15,23 +15,69 @@ by version) is planned, not built.
 - Build: `go build ./...` - test: `go test ./...` (envtest needs `KUBEBUILDER_ASSETS`, see
   the CI workflow; without it that one test skips).
 - CRD and RBAC: `config/crd`, `config/manager` (regenerate with controller-gen, see CI).
-- Run locally against a kubeconfig (the PoC path):
+- Copy-paste examples: `config/samples/` (a CellSet and its frozen values ConfigMap).
+- Run locally against a kubeconfig (handy while developing):
   `go run ./cmd --chart ../chart --vpc-cidr <the nodes' VPC range>`.
-- In-cluster: build the image at the REPO ROOT (`docker build -f controller/Dockerfile .`),
-  push it PRIVATE to ghcr (`ghcr.io/imdt-claudiop/bbb-k8s-controller:<sha>`; the repository is
-  private, so the image must be too), create the `ghcr-pull` docker-registry Secret in the
-  controller namespace, then apply `config/crd` and `config/manager` (set the image tag and a
-  nodeSelector for the cluster's shared-services pool). The controller reaches the cells'
-  public hosts from inside the cluster, so each cell's frozen values must admit its namespace
-  in `nginx.clientNamespaces` (e.g. `[scalelite, bbb-k8s-controller]`).
 
-What the operator provides per CellSet, in its namespace: the frozen values ConfigMap
-(`spec.version.valuesRef`, key `values.yaml`, without per-cell values), the TLS Secret
-(`spec.host.tlsSecretRef`), the balancer credential (`spec.balancer.secretRef`, key
-`loadbalancer-secret`) and, with recording delivery, the SSH key
-(`spec.recordingSecretRef`). Per cell, BEFORE scaling up: the node pool labelled
+## Deploying in-cluster
+
+The image is PRIVATE (the repository is private; the code never goes to a public registry).
+From the repo root:
+
+```bash
+# 1. Build and push the image, tagged by commit.
+docker build -f controller/Dockerfile -t ghcr.io/imdt-claudiop/bbb-k8s-controller:<sha> .
+docker login ghcr.io -u imdt-claudiop    # a PAT with write:packages
+docker push ghcr.io/imdt-claudiop/bbb-k8s-controller:<sha>
+# First push: confirm the package is PRIVATE (the GitHub packages page, or the API).
+
+# 2. CRD, RBAC and the controller namespace.
+kubectl apply -f controller/config/crd -f controller/config/manager
+
+# 3. The pull Secret the manifest references.
+kubectl -n bbb-k8s-controller create secret docker-registry ghcr-pull   --docker-server=ghcr.io --docker-username=imdt-claudiop --docker-password=<PAT with read:packages>
+
+# 4. Pin the image tag and the cluster's shared-services pool (docs/doks.md, "The shared
+#    services pool") - the controller must never land on cell nodes.
+kubectl -n bbb-k8s-controller patch deploy bbb-k8s-controller --type merge -p '{
+  "spec": {"template": {"spec": {
+    "nodeSelector": {"doks.digitalocean.com/node-pool": "<services pool name>"},
+    "containers": [{"name": "controller",
+      "image": "ghcr.io/imdt-claudiop/bbb-k8s-controller:<sha>",
+      "args": ["--vpc-cidr", "<the nodes VPC range, e.g. 10.116.0.0/20>"]}]
+  }}}}'
+kubectl -n bbb-k8s-controller get pods     # Running
+```
+
+Two prerequisites that bite when skipped:
+
+- **`nginx.clientNamespaces` in the frozen values** must list the controller's namespace (and
+  the balancer's, when it runs in-cluster): both reach the cells' public hosts from inside
+  the cluster, where the chart's public ipBlock rule cannot admit them (`config/samples/values-configmap.yaml`).
+- **The counter seed**: adopting a cluster whose cell history predates the controller, set
+  the `bbb-k8s.imdt.dev/next-cell` annotation on the CellSet so deleted cells' numbers are
+  never reused (`config/samples/cellset.yaml`).
+
+## What the operator provides per CellSet
+
+In the CellSet's namespace (`config/samples/` has the CellSet and ConfigMap):
+
+```bash
+kubectl create namespace cellsets
+# The frozen values of the version (cell-agnostic; see config/samples/values-configmap.yaml).
+kubectl -n cellsets apply -f controller/config/samples/values-configmap.yaml
+# The TLS certificate covering every cell host, copied to each cell.
+kubectl -n cellsets create secret tls bbb-wildcard-tls --cert=<fullchain.pem> --key=<privkey.pem>
+# The balancer credential (scalelite: the LOADBALANCER_SECRET). Never copied to cells.
+kubectl -n cellsets create secret generic scalelite-api --from-literal=loadbalancer-secret=<secret>
+# With recording delivery: the SSH key the cells deliver with (key id; known_hosts optional).
+kubectl -n cellsets create secret generic spool-ssh --from-file=id=<private key> --from-file=known_hosts=<known_hosts>
+```
+
+Per cell, BEFORE scaling up: the node pool labelled
 `bbb-k8s/cell=<status.nextCell>` plus one `bbb-k8s/role` per node, tainted
-`bbb-k8s/cell=<n>:NoSchedule` (docs/doks.md, "Several cells").
+`bbb-k8s/cell=<n>:NoSchedule` (docs/doks.md, "Several cells"). A test balancer for a cluster
+without one: [docs/scalelite-test.md](../docs/scalelite-test.md).
 
 ## Upgrading (phase 2, step 4)
 

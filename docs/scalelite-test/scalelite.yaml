@@ -1,0 +1,90 @@
+# Scalelite v1.8.6 test bench for the bbb-k8s phase 2 PoC (official images, per
+# docs/docker-README.md of blindsidenetworks/scalelite; no official helm chart exists).
+# Everything pinned to the shared services pool (SERVICES_POOL: fill with sed, see
+# docs/scalelite-test.md step 3).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: scalelite-postgres, namespace: scalelite }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: do-block-storage
+  resources: { requests: { storage: 2Gi } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: scalelite-redis, namespace: scalelite }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: do-block-storage
+  resources: { requests: { storage: 1Gi } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: scalelite-recordings, namespace: scalelite }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: do-block-storage
+  resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: scalelite-postgres, namespace: scalelite }
+spec: { clusterIP: None, selector: { app: scalelite-postgres }, ports: [ { port: 5432 } ] }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: scalelite-postgres, namespace: scalelite }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: scalelite-postgres } }
+  template:
+    metadata: { labels: { app: scalelite-postgres } }
+    spec:
+      enableServiceLinks: false
+      nodeSelector: { doks.digitalocean.com/node-pool: SERVICES_POOL }
+      containers:
+        - name: postgres
+          image: postgres:16
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: scalelite-secrets, key: postgres-password } }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports: [ { containerPort: 5432 } ]
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          volumeMounts: [ { name: data, mountPath: /var/lib/postgresql/data } ]
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: scalelite-postgres }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: scalelite-redis, namespace: scalelite }
+spec: { clusterIP: None, selector: { app: scalelite-redis }, ports: [ { port: 6379 } ] }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: scalelite-redis, namespace: scalelite }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: scalelite-redis } }
+  template:
+    metadata: { labels: { app: scalelite-redis } }
+    spec:
+      enableServiceLinks: false
+      nodeSelector: { doks.digitalocean.com/node-pool: SERVICES_POOL }
+      containers:
+        - name: redis
+          image: redis:7.4
+          args: ["--appendonly", "yes", "--dir", "/data"]
+          ports: [ { containerPort: 6379 } ]
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+          volumeMounts: [ { name: data, mountPath: /data } ]
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: scalelite-redis }

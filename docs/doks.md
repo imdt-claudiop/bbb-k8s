@@ -90,3 +90,11 @@ kubectl get nodes -l bbb-k8s/cell=<n> -L bbb-k8s/role -o wide   # four nodes, on
 The media ports need the firewall rule of section 4 for the new media node too: apply it by the
 pool's tag when creating the pool. Write the cell's values as in section 5, with `cell: "<n>"`
 and the EXTERNAL-IP of the cell's media node.
+
+## The shared services pool
+
+Cell nodes are tainted, so anything that is not a cell pod needs a home of its own: the cell
+controller and an in-cluster test balancer (docs/scalelite-test.md) run on a small untainted,
+unlabelled pool [confirm: **Add Node Pool**, no labels, no taints]. One `s-2vcpu-4gb` node
+carries both for a lab; resize later if it gets tight. Pin workloads to it with a nodeSelector
+on `doks.digitalocean.com/node-pool: <pool name>`.

@@ -160,3 +160,51 @@ Phase 3, as architectural improvements:
 - Recording decoupled through a queue and object storage; `bbb-data` outside the cell.
 - SLOs in numbers.
 - What phase 1 still leaves out: the caption inbox, Office conversion, telephony, recording formats beyond presentation, notes inside the recording.
+
+---
+
+## Deviations from the original proposal
+
+*Added after the implementation (2026-10-22, PoC complete). The text above is the proposal as
+written; where the build deviated or had to decide what the proposal left open, the record is
+here - nothing above was rewritten.*
+
+- **Retiring holds a 2-minute drain grace** before anything is torn down. The proposal's
+  conditions (zero meetings, recordings delivered) read instantly-true in the seconds after a
+  meeting ends, before BBB materializes the recording markers - two recordings died with
+  their cell in the live proof until the grace existed. The grace is a floor, not a ceiling:
+  the no-time-limit rule of Retiring stands.
+- **"Recordings delivered" is measured in the cell**: every recorded meeting must have its
+  `sender.done` (or a `.norecord`), plus an empty handoff spool. The export-annotations queue
+  of the Retired condition is NOT checked (declared gap). With delivery off, the check is
+  skipped entirely - nothing would ever write the marker.
+- **The scale-to-zero refusal is controller-side**: the controller keeps one cell and raises a
+  `ScaleToZeroRefused` condition instead of rejecting the write (an admission webhook, which
+  would fail the `kubectl scale` itself, was judged disproportionate for the PoC and can come
+  with later work).
+- **A Failed cell holds its replica slot** until the operator deletes its status entry
+  (`ReplicasHeldByFailedCell` names it). The proposal says the controller never replaces a
+  Failed cell; the slot semantics is the detail that makes that true under the scale loop.
+- **A version the controller does not carry freezes the CellSet for growth, never for the way
+  out**: no new cells, an in-flight Provisioning cell fails at its deadline, and existing
+  cells still register, drain and retire. This is what lets the old set empty under the new
+  controller during an upgrade; the proposal implies it, the build pins it.
+- **The global cell counter can be seeded** (`bbb-k8s.imdt.dev/next-cell` annotation) when a
+  cluster's cell history predates the controller - deleted namespaces leave nothing to count
+  from.
+- **The recording copy runs in a sidecar** (`spool-transfer`): the official
+  record-and-playback image ships rsync but no SSH client, so the cell's post_publish drops
+  the tar in a local handoff and the sidecar rsyncs it over SSH. Adding the client upstream
+  is the durable path.
+- **The spool egress rule has two forms**: `spool.cidr` for a host outside the cluster and
+  `spool.namespace` for an in-cluster spool - CIDR rules do not match in-cluster destinations
+  under Cilium (measured on DOKS).
+- **`nginx.clientNamespaces`** (not in the proposal): in-cluster clients of a cell's public
+  entry - the balancer's poller, the controller - are short-circuited by Cilium to the nginx
+  pod, where the public ipBlock rule cannot admit them; they are admitted by namespace name.
+- **The CellSet carries `recordingSecretRef`** (not in the proposal's schema): the common
+  recording-delivery credential the proposal describes in prose, copied to each cell.
+- **The chart is carried by the controller image**, and `spec.version.chart` must match it;
+  charts in a registry (and consuming them by version) remain planned, not built.
+- **Scalelite wire detail**: the Servers API `load` field is a number when the poller has a
+  reading and the string `"unavailable"` when it does not; the client tolerates both.
