@@ -1,7 +1,8 @@
 # Static checks of the chart and the shell scripts: the chart must lint and render to manifests
 # the Kubernetes API accepts (the Cilium CRDs included, through the CRDs catalog), with the values
 # of both clusters: DOKS (Cilium policies) and k3s-local (plain policies, extra CA), and the two
-# cells of the DOKS cluster (namespaces cell-1 and cell-2). Nothing here
+# cells of the DOKS cluster (namespaces cell-1 and cell-2), one of them with recording delivery
+# to a Scalelite spool switched on. Nothing here
 # needs a cluster; `helm test` (docs/install.md "Checking an install") covers a running one.
 name: chart
 on:
@@ -35,6 +36,10 @@ jobs:
           for n in 1 2; do
             helm template bbb chart -n "cell-$n" -f "clusters/doks-hackweek-cell-$n.yaml" > "out/cell-$n.yaml"
           done
+          helm template bbb chart -n cell-1 -f clusters/doks-hackweek-cell-1.yaml \
+            --set recording.scalelite.spool.host=scalelite-spool@203.0.113.10 \
+            --set recording.scalelite.spool.path=/var/bigbluebutton/spool \
+            --set recording.scalelite.spool.cidr=203.0.113.10/32 > out/cell-1-scalelite.yaml
           # Two cells, two load balancers.
           test "$(grep -h do-loadbalancer-name out/cell-1.yaml out/cell-2.yaml | sort -u | wc -l)" = 2
       - name: kubeconform
@@ -42,7 +47,7 @@ jobs:
           docker run --rm -v "$PWD/out:/out:ro" ghcr.io/yannh/kubeconform:v0.7.0 -strict -summary \
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            /out/doks-hackweek.yaml /out/k3s-local.yaml /out/cell-1.yaml /out/cell-2.yaml
+            /out/doks-hackweek.yaml /out/k3s-local.yaml /out/cell-1.yaml /out/cell-2.yaml /out/cell-1-scalelite.yaml
       - name: shellcheck
         run: |
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.10.0 \

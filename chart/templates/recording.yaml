@@ -7,6 +7,15 @@
       "playback_host" (include "bbb.publicHost" .)
       "bn_notes_endpoint" "http://shared-notes:8787/loopback/api/documents" }}
 {{- $config = mergeOverwrite $config $wiring (deepCopy .Values.recording.config) }}
+{{- /* Recording delivery to a Scalelite spool (phase 2 spec, "Recordings"), on when
+       recording.scalelite.spool.host is set; see the comment in values.yaml. */}}
+{{- $spool := .Values.recording.scalelite.spool }}
+{{- $delivery := ne ($spool.host | default "" | toString) "" }}
+{{- $scaleliteConfig := dict
+      "work_dir" "/var/bigbluebutton/recording/scalelite"
+      "spool_dir" "/var/bigbluebutton/spool"
+      "extra_rsync_opts" (list)
+      "delete_recording" false }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -16,6 +25,14 @@ metadata:
 data:
   bigbluebutton.yml: |
     {{- toYaml $config | nindent 4 }}
+  {{- if $delivery }}
+  # The script reads scalelite.yml next to the scripts dir; spool_dir is the local handoff on
+  # bbb-data, where the sidecar picks the tar up. Verbatim upstream script below it.
+  scalelite.yml: |
+    {{- toYaml $scaleliteConfig | nindent 4 }}
+  scalelite_post_publish.rb: |
+    {{- .Files.Get "files/scalelite/scalelite_post_publish.rb" | nindent 4 }}
+  {{- end }}
 ---
 # Recording processing (docs/phase1.md, section 8): one pod, two containers - rap-starter watches the
 # status files bbb-web writes and enqueues jobs; the resque workers archive, process and
@@ -41,7 +58,13 @@ spec:
         {{- include "bbb.labels" . | nindent 8 }}
         {{- include "bbb.selector" "recording" | nindent 8 }}
       annotations:
-        bbb-k8s/config-sha: {{ toYaml $config | sha256sum | trunc 16 | quote }}
+        {{- /* With delivery off the input is the config alone, so the sha (and the pods) do
+             not move on an upgrade from a release without delivery. */}}
+        {{- $shaInput := toYaml $config }}
+        {{- if $delivery }}
+        {{- $shaInput = printf "%s%s" $shaInput (toYaml $scaleliteConfig) }}
+        {{- end }}
+        bbb-k8s/config-sha: {{ $shaInput | sha256sum | trunc 16 | quote }}
     spec:
       {{- include "bbb.nodeSelector" (dict "root" . "role" .Values.bbbData.role) | nindent 6 }}
       securityContext:
@@ -66,6 +89,9 @@ spec:
               printf 'securitySalt=%s\n' "$SHARED_SECRET" > /props/bbb-web.properties
               mkdir -p /var/log/bigbluebutton/presentation /var/log/bigbluebutton/video /var/log/bigbluebutton/notes /var/log/bigbluebutton/screenshare
               {{ include "bbb.dataTree" . }}
+              {{- if $delivery }}
+              mkdir -p /var/bigbluebutton/spool /var/bigbluebutton/recording/scalelite
+              {{- end }}
           env:
             - name: SHARED_SECRET
               valueFrom:
@@ -100,6 +126,14 @@ spec:
             - name: config
               mountPath: /etc/bigbluebutton/recording/recording.yml
               subPath: bigbluebutton.yml
+            {{- if $delivery }}
+            - name: config
+              mountPath: /usr/local/bigbluebutton/core/scripts/scalelite.yml
+              subPath: scalelite.yml
+            - name: config
+              mountPath: /usr/local/bigbluebutton/core/scripts/post_publish/scalelite_post_publish.rb
+              subPath: scalelite_post_publish.rb
+            {{- end }}
             - name: props
               mountPath: /etc/bigbluebutton/bbb-web.properties
               subPath: bbb-web.properties
@@ -107,6 +141,56 @@ spec:
             - name: logs
               mountPath: /var/log/bigbluebutton
             - name: tmp
+              mountPath: /tmp
+        {{- end }}
+        {{- if $delivery }}
+        # The transfer sidecar: rsyncs every finished tar in the handoff dir to the spool over
+        # SSH and removes it on success (a failed transfer stays and is retried). rsync writes
+        # the handoff tar through a temporary dotfile, so *.tar only matches finished files.
+        # Runs as root inside its container: ssh refuses a uid without a passwd entry, and the
+        # image has none for 998 (root also reads the tars whatever their owner).
+        - name: spool-transfer
+          image: {{ .Values.recording.scalelite.transferImage }}
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          command:
+            - sh
+            - -c
+            - |
+              set -u
+              opts="-i /ssh/id -p $SPOOL_PORT"
+              if [ -f /ssh/known_hosts ]; then
+                opts="$opts -o UserKnownHostsFile=/ssh/known_hosts -o StrictHostKeyChecking=yes"
+              else
+                opts="$opts -o UserKnownHostsFile=/tmp/known_hosts -o StrictHostKeyChecking=accept-new"
+              fi
+              echo "transferring tars from /var/bigbluebutton/spool to $SPOOL_DEST"
+              while :; do
+                for f in /var/bigbluebutton/spool/*.tar; do
+                  [ -e "$f" ] || continue
+                  echo "transferring $(basename "$f")"
+                  rsync --verbose --remove-source-files -e "ssh $opts" "$f" "$SPOOL_DEST/" \
+                    || echo "transfer of $(basename "$f") failed, retrying on the next pass"
+                done
+                sleep 15
+              done
+          env:
+            - name: SPOOL_DEST
+              value: {{ printf "%s:%s" .Values.recording.scalelite.spool.host (required "recording.scalelite.spool.path is empty" .Values.recording.scalelite.spool.path) | quote }}
+            - name: SPOOL_PORT
+              value: {{ .Values.recording.scalelite.spool.port | quote }}
+            - name: HOME
+              value: /tmp
+          resources:
+            {{- toYaml .Values.recording.scalelite.transferResources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/bigbluebutton
+            - name: ssh
+              mountPath: /ssh
+              readOnly: true
+            - name: transfer-tmp
               mountPath: /tmp
         {{- end }}
       volumes:
@@ -125,3 +209,11 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
+        {{- if $delivery }}
+        - name: ssh
+          secret:
+            secretName: {{ .Values.recording.scalelite.sshKeySecret }}
+            defaultMode: 0400
+        - name: transfer-tmp
+          emptyDir: {}
+        {{- end }}

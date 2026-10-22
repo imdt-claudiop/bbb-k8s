@@ -211,6 +211,29 @@ spec:
       "egress" (list (list 6379 (list "redis")))) }}
 {{- include "bbb.netpol" (dict "root" . "name" "recording"
       "egress" (list (list 6379 (list "redis")))) }}
+{{- /* Recording delivery (phase 2 spec, "Recordings"): the spool host is the one external
+       destination the recording pod may reach, on the SSH port, for the transfer sidecar. */}}
+{{- $spool := .Values.recording.scalelite.spool }}
+{{- if ne ($spool.host | default "" | toString) "" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: recording-spool
+  labels:
+    {{- include "bbb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "bbb.selector" "recording" | nindent 6 }}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: {{ required "recording.scalelite.spool.cidr is empty: the spool host as a CIDR, for the egress rule" $spool.cidr }}
+      ports:
+        - { protocol: TCP, port: {{ $spool.port }} }
+{{- end }}
 {{- /* LiveKit's flows: livekit.networkPolicy picks CiliumNetworkPolicies by node entity
        ("cilium") or plain NetworkPolicies by livekit.nodeIP ("plain"); "auto" asks the cluster's
        API, which a render without a cluster (helm template, GitOps) does not have. */}}

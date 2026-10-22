@@ -314,6 +314,35 @@ SFU webhook of every cell. Accepted for now; restricting them by node label is l
   polls.json, external_videos.json, webcams.mp4) and gets 404s; this likely matches a package
   install without those features, but was not compared against one.
 
+### Recording delivery to a Scalelite spool
+
+Off by default. With `recording.scalelite.spool.host` set (plus `path`, `cidr` and, when not
+22, `port`), every published recording is packed into a tar and delivered to that host, the
+spool a Scalelite imports from (`recordings:watch`, which deletes the tar after the import;
+Scalelite serves the playback from then on). The pieces, all in the recording pod:
+
+- Scalelite's own `post_publish` script (`chart/files/scalelite/scalelite_post_publish.rb`,
+  verbatim from blindsidenetworks/scalelite v1.8.6), mounted into the scripts dir, packs the
+  formats and drops the tar in `/var/bigbluebutton/spool` on `bbb-data`;
+- the `spool-transfer` sidecar rsyncs every finished tar there to `host:path` over SSH and
+  removes it on success (a failed transfer is retried; the official record-and-playback image
+  has rsync but no SSH client, hence the sidecar);
+- the `recording-spool` NetworkPolicy opens the recording pod's egress to `cidr` on `port`,
+  the only external destination it may reach.
+
+The SSH key is a Secret the operator creates once and copies to each cell's namespace, never
+in values or in this repository:
+
+```bash
+kubectl -n <namespace> create secret generic scalelite-spool-ssh \
+  --from-file=id=<private key> --from-file=known_hosts=<known_hosts>   # known_hosts optional
+```
+
+On the Scalelite side, restrict the key to the spool directory and to writing (e.g. a forced
+command such as rrsync pointing at the spool). `delete_recording` stays off: the script's
+delete path calls `bbb-record`, which the image does not have; the published content stays on
+`bbb-data` until the cell is retired (the phase 2 spec, "Recordings").
+
 ## How shared notes and the annotation export are wired
 
 - **bbb-shared-notes** converts a notes PDF export with `wkhtmltopdf`, installed in the image

@@ -212,6 +212,30 @@ webrtcRecorder:
 recording:
   # Overrides merged over the package's bigbluebutton.yml (chart/files/bigbluebutton.yml).
   config: {}
+  # Recording delivery to a Scalelite spool (phase 2 spec, "Recordings"). Off while spool.host
+  # is empty. When set, Scalelite's own post_publish script
+  # (chart/files/scalelite/scalelite_post_publish.rb, verbatim from blindsidenetworks/scalelite
+  # v1.8.6; the Servers API needs Scalelite >= 1.5.1) packs the published formats of each
+  # recording into a tar and drops it in /var/bigbluebutton/spool; a sidecar rsyncs every tar
+  # over SSH to spool.host:spool.path and removes it on success. The copy runs in a sidecar
+  # because the official record-and-playback image ships rsync but no SSH client (verified on
+  # v4.1.x-develop-5b80a5b); adding the client upstream is the durable path, the sidecar is the
+  # bridge. delete_recording stays off: the script's delete calls bbb-record, which the image
+  # does not have (deleting after delivery is phase 3).
+  scalelite:
+    spool:
+      host: ""          # [user@]host that receives the tars (Scalelite's recording import spool)
+      path: ""          # absolute spool directory on that host
+      cidr: ""          # that host as a CIDR (e.g. 203.0.113.10/32), for the egress rule
+      port: 22
+    # Secret the operator creates: key id = SSH private key (shared by the cells; the server
+    # side restricts it to the spool directory, write-only, e.g. rrsync); optional key
+    # known_hosts pins the host key (absent: accept-new on first contact).
+    sshKeySecret: scalelite-spool-ssh
+    transferImage: "instrumentisto/rsync-ssh:alpine3.22"
+    transferResources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 500m, memory: 256Mi }
   # Spec 3.3: 1 CPU / 1 Gi requested for the pod, ffmpeg bursts up to 3 CPU / 3 Gi. The storage
   # node also runs bbb-web, nginx and the recorder, so the requests are sized to fit beside them.
   resources:
