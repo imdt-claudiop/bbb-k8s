@@ -49,7 +49,9 @@ func (f *fakeScalelite) handler(t *testing.T) http.Handler {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			f.nextID++
 			id := fmt.Sprintf("id-%d", f.nextID)
-			f.servers[id] = &server{ID: id, URL: body.Server.URL, State: "disabled", Load: "", Online: "online"}
+			// Load as a NUMBER, as the live API answers when the poller has one (the string
+			// "unavailable" is the other live shape, covered by the empty default).
+			f.servers[id] = &server{ID: id, URL: body.Server.URL, State: "disabled", Load: 0.0, Online: "online"}
 			_ = json.NewEncoder(w).Encode(f.servers[id])
 		case "updateServer":
 			var body struct {
@@ -116,7 +118,7 @@ func TestScaleliteLifecycle(t *testing.T) {
 		t.Fatalf("register not idempotent: %d servers", len(fake.servers))
 	}
 	sv, err := sc.Lookup(ctx, api)
-	if err != nil || sv == nil || sv.State != "enabled" {
+	if err != nil || sv == nil || sv.State != "enabled" || sv.Load != 0 {
 		t.Fatalf("after register: %+v %v", sv, err)
 	}
 

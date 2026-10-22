@@ -27,3 +27,26 @@ What the operator provides per CellSet, in its namespace: the frozen values Conf
 (`spec.recordingSecretRef`). Per cell, BEFORE scaling up: the node pool labelled
 `bbb-k8s/cell=<status.nextCell>` plus one `bbb-k8s/role` per node, tainted
 `bbb-k8s/cell=<n>:NoSchedule` (docs/doks.md, "Several cells").
+
+## Upgrading (phase 2, step 4)
+
+A cell is immutable: born with one version, dies with it. Changing version is a commit of
+this repository (chart, synced upstream files, frozen values), never a `helm upgrade` of a
+running cell. The upgrade flow, operator-driven as the spec defines it:
+
+1. Deploy the controller built at the new commit (it carries the new chart). CellSets
+   pinning an older `spec.version.chart` are then FROZEN FOR GROWTH - no new cells - but
+   their existing cells still register, drain and retire (`VersionSupported: False` names
+   it); a version whose change is only in the frozen values keeps the same chart and needs
+   no controller swap.
+2. Create a NEW CellSet with the new version (`spec.version.chart` + a new frozen values
+   ConfigMap) against the same balancer, and scale it up (node pools first, as always).
+3. When the new set has as many `Registered` cells as the old one, set the old set's
+   `replicas: 0`: its cells go through Retiring one at a time (drain grace, zero meetings,
+   recordings delivered, deregister, uninstall). The scale-to-zero refusal does not fire,
+   because the balancer still has the new set's Registered cells; zeroing the LAST
+   registered set remains refused.
+4. Delete the old CellSet object once its cells are gone. Node pools are the operator's to
+   reuse or remove (cell numbers are never reused; pools are relabelled for new numbers).
+
+No meeting is ended by the process: a cell with meetings waits in Retiring until they finish.

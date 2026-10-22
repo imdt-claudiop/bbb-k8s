@@ -68,14 +68,27 @@ func (s *Scalelite) request(ctx context.Context, method, call, query string, bod
 	return out, nil
 }
 
-// server is the Servers API wire shape.
+// server is the Servers API wire shape. load is a NUMBER when the poller has one and the
+// STRING "unavailable" when it does not (measured live on v1.8.6), so it is typed loosely.
 type server struct {
 	ID       string `json:"id"`
 	URL      string `json:"url"`
 	State    string `json:"state"`
-	Load     string `json:"load"`
+	Load     any    `json:"load"`
 	Online   string `json:"online"`
 	Meetings any    `json:"meetings"` // absent in some versions
+}
+
+// loadOf reads the loose load field: numbers pass through, anything else is zero.
+func loadOf(v any) float64 {
+	switch t := v.(type) {
+	case float64:
+		return t
+	case string:
+		f, _ := strconv.ParseFloat(t, 64)
+		return f
+	}
+	return 0
 }
 
 func (s *Scalelite) servers(ctx context.Context) ([]server, error) {
@@ -113,7 +126,7 @@ func (s *Scalelite) Lookup(ctx context.Context, apiURL string) (*Server, error) 
 	if err != nil || sv == nil {
 		return nil, err
 	}
-	load, _ := strconv.ParseFloat(sv.Load, 64)
+	load := loadOf(sv.Load)
 	meetings := 0
 	switch m := sv.Meetings.(type) {
 	case float64:

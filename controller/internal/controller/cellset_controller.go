@@ -86,18 +86,21 @@ func (r *CellSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 	orig := cs.DeepCopy()
 
-	// The controller carries the chart of the commit it was built from and refuses another
-	// version (publishing charts to a registry is later work).
+	// The controller carries the chart of the commit it was built from. A CellSet pinning
+	// another version is FROZEN FOR GROWTH - no new cells, and an in-flight Provisioning
+	// cell cannot be built - but its existing cells still register, drain and retire: the
+	// spec's upgrade is exactly an old-version set emptying under the new controller.
 	chartVersion, err := r.HelmClient.ChartVersion()
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if cs.Spec.Version.Chart != chartVersion {
+	supported := cs.Spec.Version.Chart == chartVersion
+	if !supported {
 		r.setCondition(&cs, "VersionSupported", metav1.ConditionFalse, "ChartMismatch",
-			fmt.Sprintf("this controller carries chart %s, the spec asks %s", chartVersion, cs.Spec.Version.Chart))
-		return r.finish(ctx, orig, &cs, ctrl.Result{})
+			fmt.Sprintf("this controller carries chart %s, the spec asks %s: no new cells; existing cells still drain and retire", chartVersion, cs.Spec.Version.Chart))
+	} else {
+		r.setCondition(&cs, "VersionSupported", metav1.ConditionTrue, "ChartMatches", "")
 	}
-	r.setCondition(&cs, "VersionSupported", metav1.ConditionTrue, "ChartMatches", "")
 
 	cs.Status.Selector = cellSetLabel + "=" + cs.Name
 	if err := r.ensureNextCell(ctx, &cs); err != nil {
@@ -130,7 +133,7 @@ func (r *CellSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// first (the operator's step), so a cell may sit waiting for its nodes. A Failed cell
 	// keeps occupying its slot until the operator deletes its status entry (the spec rules
 	// out the controller replacing it on its own), so it counts against the gap.
-	for r.serving(&cs)+r.failed(&cs) < desired {
+	for supported && r.serving(&cs)+r.failed(&cs) < desired {
 		n := cs.Status.NextCell
 		cs.Status.NextCell = n + 1
 		cs.Status.Cells = append(cs.Status.Cells, bbbv1alpha1.CellStatus{
@@ -156,6 +159,13 @@ func (r *CellSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		var wait bool
 		switch cell.Phase {
 		case bbbv1alpha1.CellProvisioning:
+			if !supported {
+				// Cannot be built: this controller does not carry its chart. The provision
+				// deadline will fail it; the operator decides from there.
+				cell.Waiting = fmt.Sprintf("chart %s not carried by this controller", cs.Spec.Version.Chart)
+				wait = true
+				break
+			}
 			wait, err = r.provision(ctx, &cs, cell)
 		case bbbv1alpha1.CellReady:
 			wait, err = r.register(ctx, &cs, cell)

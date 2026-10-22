@@ -165,14 +165,19 @@ func lbService(ns, ip string) *corev1.Service {
 
 func reconcile(t *testing.T, w *world) *bbbv1alpha1.CellSet {
 	t.Helper()
+	return reconcileNamed(t, w, "bbb-41")
+}
+
+func reconcileNamed(t *testing.T, w *world, name string) *bbbv1alpha1.CellSet {
+	t.Helper()
 	_, err := w.r.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: types.NamespacedName{Name: "bbb-41", Namespace: "cellsets"}})
+		NamespacedName: types.NamespacedName{Name: name, Namespace: "cellsets"}})
 	if err != nil {
-		t.Fatalf("reconcile: %v", err)
+		t.Fatalf("reconcile %s: %v", name, err)
 	}
 	var cs bbbv1alpha1.CellSet
-	if err := w.c.Get(context.Background(), types.NamespacedName{Name: "bbb-41", Namespace: "cellsets"}, &cs); err != nil {
-		t.Fatalf("get: %v", err)
+	if err := w.c.Get(context.Background(), types.NamespacedName{Name: name, Namespace: "cellsets"}, &cs); err != nil {
+		t.Fatalf("get %s: %v", name, err)
 	}
 	return &cs
 }
@@ -493,6 +498,94 @@ func TestRetireCellThatNeverGotItsHost(t *testing.T) {
 	got = reconcile(t, w) // namespace gone -> Retired, pruned
 	if len(got.Status.Cells) != 0 || got.Status.Replicas != 0 {
 		t.Fatalf("not retired: %+v", got.Status.Cells)
+	}
+}
+
+func TestMismatchFreezesGrowthOnly(t *testing.T) {
+	// A CellSet pinning a chart this controller does not carry plans no new cells, but its
+	// existing Registered cell is untouched and the set still answers scale-downs.
+	cs := cellset(2)
+	cs.Spec.Version.Chart = "9.9.9"
+	cs.Status.NextCell = 4
+	cs.Status.Cells = []bbbv1alpha1.CellStatus{{Name: "cell-3", Phase: bbbv1alpha1.CellRegistered,
+		Host: "c3.example", Created: metav1.Now(), PhaseSince: metav1.Now()}}
+	w := newWorld(t, cs)
+	w.helm.deployed["cell-3"] = true
+	w.bal.state["https://c3.example/bigbluebutton/api"] = "enabled"
+	got := reconcile(t, w)
+	if len(got.Status.Cells) != 1 || got.Status.NextCell != 4 {
+		t.Fatalf("grew under mismatch: %+v next=%d", got.Status.Cells, got.Status.NextCell)
+	}
+	if phaseOf(got, "cell-3") != bbbv1alpha1.CellRegistered {
+		t.Fatalf("registered cell touched: %+v", got.Status.Cells)
+	}
+	cond := meta.FindStatusCondition(got.Status.Conditions, "VersionSupported")
+	if cond == nil || cond.Status != metav1.ConditionFalse {
+		t.Fatalf("missing VersionSupported=False: %+v", got.Status.Conditions)
+	}
+}
+
+func TestUpgradeOldSetDrainsUnderNewController(t *testing.T) {
+	// The spec's upgrade: a new CellSet (the chart this controller carries) has a Registered
+	// cell; the old set (an older chart) is zeroed and must retire its cell - the refusal
+	// does not fire because the balancer still has the new set's Registered cells.
+	old := cellset(0)
+	old.Name = "bbb-41"
+	old.UID = "u-old"
+	old.Spec.Version.Chart = "0.3.9"
+	old.Status.NextCell = 4
+	old.Status.Cells = []bbbv1alpha1.CellStatus{{Name: "cell-3", Phase: bbbv1alpha1.CellRegistered,
+		Host: "c3.example", Created: metav1.NewTime(time.Now().Add(-2 * time.Hour)),
+		PhaseSince: metav1.NewTime(time.Now().Add(-2 * time.Hour))}}
+	niu := cellset(1)
+	niu.Name = "bbb-41b"
+	niu.UID = "u-new"
+	niu.Status.NextCell = 8
+	niu.Status.Cells = []bbbv1alpha1.CellStatus{{Name: "cell-7", Phase: bbbv1alpha1.CellRegistered,
+		Host: "c7.example", Created: metav1.Now(), PhaseSince: metav1.Now()}}
+	objs := append(cellWorldObjects(1), old, niu,
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "bbb-salt", Namespace: "cell-3"},
+			Data: map[string][]byte{"security-salt": []byte("s3")}})
+	w := newWorld(t, objs...)
+	w.helm.deployed["cell-3"], w.helm.deployed["cell-7"] = true, true
+	w.bal.state["https://c3.example/bigbluebutton/api"] = "enabled"
+	w.bal.state["https://c7.example/bigbluebutton/api"] = "enabled"
+	w.meetings["c3.example"] = [2]int{0, 0}
+	w.meetings["c7.example"] = [2]int{1, 3}
+
+	got := reconcile(t, w) // old set: suspend cell-3, hold the grace
+	if phaseOf(got, "cell-3") != bbbv1alpha1.CellRetiring {
+		t.Fatalf("old cell not retiring: %+v", got.Status.Cells)
+	}
+	if cond := meta.FindStatusCondition(got.Status.Conditions, "ScaleToZeroRefused"); cond != nil {
+		t.Fatalf("refused with the new set registered: %+v", cond)
+	}
+	backdateRetiring(t, w, "cell-3")
+	got = reconcile(t, w)
+	got = reconcile(t, w)
+	if len(got.Status.Cells) != 0 || got.Status.Replicas != 0 {
+		t.Fatalf("old set not emptied: %+v", got.Status.Cells)
+	}
+	if _, ok := w.bal.state["https://c3.example/bigbluebutton/api"]; ok {
+		t.Fatalf("old cell still on the balancer: %+v", w.bal.state)
+	}
+	// The new set's cell was never touched.
+	if !w.helm.deployed["cell-7"] || w.bal.state["https://c7.example/bigbluebutton/api"] != "enabled" {
+		t.Fatalf("new set touched: %+v %+v", w.helm.deployed, w.bal.state)
+	}
+	// And zeroing the NEW set now is refused: it is the only registered one left.
+	zero := int32(0)
+	niu2 := reconcileNamed(t, w, "bbb-41b")
+	niu2.Spec.Replicas = &zero
+	if err := w.c.Update(context.Background(), niu2); err != nil {
+		t.Fatal(err)
+	}
+	niu2 = reconcileNamed(t, w, "bbb-41b")
+	if phaseOf(niu2, "cell-7") != bbbv1alpha1.CellRegistered {
+		t.Fatalf("zeroed the only registered set: %+v", niu2.Status.Cells)
+	}
+	if cond := meta.FindStatusCondition(niu2.Status.Conditions, "ScaleToZeroRefused"); cond == nil {
+		t.Fatalf("missing refusal: %+v", niu2.Status.Conditions)
 	}
 }
 
