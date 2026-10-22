@@ -65,10 +65,12 @@ metadata:
   name: bbb-nginx
   labels:
     {{- include "bbb.labels" . | nindent 4 }}
-  {{- with .Values.nginx.service.annotations }}
+  {{- /* One DigitalOcean load balancer per cell: its name follows the namespace unless the
+         values set it. */}}
+  {{- $annotations := merge (deepCopy (.Values.nginx.service.annotations | default dict))
+        (dict "service.beta.kubernetes.io/do-loadbalancer-name" (printf "bbb-k8s-%s" .Release.Namespace)) }}
   annotations:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- toYaml $annotations | nindent 4 }}
 spec:
   type: {{ .Values.nginx.service.type }}
   {{- if eq .Values.nginx.service.type "LoadBalancer" }}

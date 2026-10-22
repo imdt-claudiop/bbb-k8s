@@ -26,6 +26,9 @@ spec:
         {{- include "bbb.selector" "bootstrap" | nindent 8 }}
     spec:
       restartPolicy: Never
+      {{- with include "bbb.cellPlacement" . }}
+      {{- . | nindent 6 }}
+      {{- end }}
       initContainers:
         - name: wait-postgres
           image: {{ .Values.postgres.image }}

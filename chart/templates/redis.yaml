@@ -25,6 +25,11 @@ metadata:
 spec:
   serviceName: redis
   replicas: 1
+  # The volume goes with the release: helm uninstall deletes the claim (the storage class
+  # decides whether the cloud volume goes too).
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Delete
+    whenScaled: Retain
   selector:
     matchLabels:
       {{- include "bbb.selector" "redis" | nindent 6 }}

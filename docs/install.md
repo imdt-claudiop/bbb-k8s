@@ -12,9 +12,9 @@ playback (presentation format).
 - A cluster: [doks.md](doks.md) creates one on DigitalOcean, [k3s.md](k3s.md) runs everything
   on one machine for local tests.
 - `kubectl` and `helm` (v3) pointing at the cluster.
-- A storage class named `do-block-storage-retain` (DigitalOcean Kubernetes ships it), or set
-  `postgres.storageClass`, `redis.storageClass`, `bbbData.storageClass` and
-  `webrtcRecorder.storageClass`.
+- A storage class named `do-block-storage` (DigitalOcean Kubernetes ships it; reclaim policy
+  `Delete`, so the volumes die with the cell), or set `postgres.storageClass`,
+  `redis.storageClass`, `bbbData.storageClass` and `webrtcRecorder.storageClass`.
 
 ### Node roles
 
@@ -57,7 +57,8 @@ BBB_REPO=/path/to/bigbluebutton scripts/sync-upstream.sh <commit>
 
 Two paths. Production: your own name and certificate, installed in one step. Lab: iMDT's test
 domain, whose resolver derives the name from the load balancer IP. Both run `create-secrets.sh`
-first (namespace `bbb` and the Secrets).
+first (the namespace and the Secrets). The commands install one cell in the namespace `bbb`;
+for more than one, see "Several cells in one cluster" below.
 
 ### Production: your own domain and certificate
 
@@ -135,6 +136,27 @@ time).
 `helm upgrade` with no values flags reuses the values of the previous release, so a one-off
 `--set` (for example a wrong `bootstrap.schemaSha`) silently stays in place.
 
+## Several cells in one cluster
+
+A cell is one release of the chart in its own namespace, on its own nodes. Cells never share
+Postgres, Redis, the media node or the public host ([phase1.md](phase1.md), I3). Per cell, with `<n>`
+the cell number (never reused):
+
+1. **Nodes**: one node per role, labelled `bbb-k8s/cell=<n>` and `bbb-k8s/role=<role>` and
+   tainted `bbb-k8s/cell=<n>:NoSchedule`, set on the node pools so they survive node
+   replacement ([doks.md](doks.md), "Several cells").
+2. **Secrets**: `NS=cell-<n> scripts/create-secrets.sh` (same environment as above). Each cell
+   gets its own database passwords, shared secret, Hasura and LiveKit secrets.
+3. **Values**: `cell: "<n>"`, the cell's `publicHost`, and its media node's `livekit.nodeIP`
+   and `livekit.config.rtc.ips.includes`, e.g. in `clusters/<cluster>-cell-<n>.yaml`.
+4. **Install**: `helm upgrade --install bbb chart -n cell-<n> --reset-values -f
+   clusters/<cluster>-cell-<n>.yaml`, then `NS=cell-<n> PUBLIC_HOST=... scripts/public-host.sh`
+   and `helm test bbb -n cell-<n>`.
+
+With `cell` set, every pod of the release selects the cell's nodes and tolerates its taint;
+the taint keeps other workloads off them. The load balancer is named `bbb-k8s-<namespace>`.
+Without `cell` the pods go by role only, which is what a cluster with one cell needs.
+
 ## Public entry point
 
 Every client and API URL derives from `publicHost` (`bigbluebutton.web.serverURL`), and the
@@ -144,8 +166,10 @@ client always uses `https`/`wss` on port 443 of the page's host.
   balancer in TCP mode (`nginx.service.annotations`) and the BBB nginx terminates TLS itself
   with the `bbb-tls` Secret, as on a package install. There is no Ingress controller:
   ingress-nginx is archived upstream, and an L7 layer in front would duplicate TLS and add
-  WebSocket and upload timeouts to tune. The Cilium Gateway API of the cluster is the natural
-  L7 entry for a later multi-cell router.
+  WebSocket and upload timeouts to tune. With several cells, each one has its own load
+  balancer (`bbb-k8s-<namespace>`, or `service.beta.kubernetes.io/do-loadbalancer-name` in
+  `nginx.service.annotations`) and its own public host; choosing a cell for a meeting is the
+  job of the balancer in front of them (Scalelite or equivalent), not of this chart.
 - `externalTrafficPolicy: Local` keeps the client IP, so the nginx access log shows real
   clients and the NetworkPolicy `bbb-nginx-public` admits them with an `ipBlock`. The node
   IPs and NodePorts stay closed from outside.
@@ -253,7 +277,9 @@ cilium when the cluster serves `cilium.io/v2/CiliumNetworkPolicy`. A render with
 `clusters/doks-hackweek.yaml`, `plain` in `clusters/k3s-local.yaml`.
 Policies do not protect a host-network pod itself: any pod in the cluster can open LiveKit's
 port 7880 (its API still needs a token signed with the secret). From the internet 7880 is
-filtered.
+filtered. With several cells and `cilium`, the node-entity rules admit every node of the
+cluster, not only the cell's own media node: any node reaches the Redis (no password) and the
+SFU webhook of every cell. Accepted for now; restricting them by node label is later work.
 
 ## Recording and playback
 
@@ -369,10 +395,13 @@ helm uninstall bbb -n bbb
 kubectl delete namespace bbb
 ```
 
-The storage class keeps the volumes (`Retain`): the PersistentVolumes stay `Released` and the
-cloud volumes are still billed. Reinstalling creates new volumes and does not reuse them.
-When the data is no longer needed, switch them to `Delete` so the CSI driver removes the cloud
-volumes together with the PVs:
+With the default storage class (`do-block-storage`, reclaim policy `Delete`), uninstalling
+removes the volume claims (the Postgres and Redis StatefulSets delete theirs with the release)
+and the CSI driver removes the cloud volumes with them. With a `Retain` class
+(`do-block-storage-retain`, as `clusters/doks-hackweek.yaml` keeps for the cell it already
+runs) the PersistentVolumes stay `Released` and the cloud volumes are still billed.
+Reinstalling creates new volumes and does not reuse them. When the data is no longer needed,
+switch them to `Delete` so the CSI driver removes the cloud volumes together with the PVs:
 
 ```bash
 kubectl get pv | grep Released

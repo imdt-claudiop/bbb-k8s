@@ -29,7 +29,7 @@ cluster overview]. It holds a token for the cluster: keep it out of this reposit
 ```bash
 export KUBECONFIG=~/.kube/<cluster>.yaml   # the downloaded file
 kubectl get nodes -o wide                   # 4 nodes Ready; note each EXTERNAL-IP
-kubectl get storageclass                    # do-block-storage-retain is there by default
+kubectl get storageclass                    # do-block-storage (the chart's default) is there
 ```
 
 ## 3. Label the nodes
@@ -66,3 +66,26 @@ Create `clusters/<cluster>.yaml`, as `clusters/doks-hackweek.yaml`:
 - `publicHost`: after the install has created the load balancer (install.md, "Install").
 
 Then follow [install.md](install.md) from "Install".
+
+## Several cells
+
+Each cell gets its own nodes, created before the cell is installed (install.md, "Several cells
+in one cluster"). Labels and taints set on a node pool apply to every node of the pool and
+survive node replacement, unlike `kubectl label` (section 3), so for cell `<n>` create one pool
+of one node per role [confirm: **Add Node Pool** on the cluster's page, labels and taints in the
+pool settings]:
+
+| Pool | Labels | Taint |
+|---|---|---|
+| `cell-<n>-storage` | `bbb-k8s/cell=<n>`, `bbb-k8s/role=storage` | `bbb-k8s/cell=<n>:NoSchedule` |
+| `cell-<n>-media` | `bbb-k8s/cell=<n>`, `bbb-k8s/role=media` | same |
+| `cell-<n>-control` | `bbb-k8s/cell=<n>`, `bbb-k8s/role=control` | same |
+| `cell-<n>-data` | `bbb-k8s/cell=<n>`, `bbb-k8s/role=data` | same |
+
+```bash
+kubectl get nodes -l bbb-k8s/cell=<n> -L bbb-k8s/role -o wide   # four nodes, one per role
+```
+
+The media ports need the firewall rule of section 4 for the new media node too: apply it by the
+pool's tag when creating the pool. Write the cell's values as in section 5, with `cell: "<n>"`
+and the EXTERNAL-IP of the cell's media node.

@@ -14,6 +14,9 @@ metadata:
     helm.sh/hook-delete-policy: before-hook-creation
 spec:
   restartPolicy: Never
+  {{- with include "bbb.cellPlacement" . }}
+  {{- . | nindent 2 }}
+  {{- end }}
   enableServiceLinks: false
   automountServiceAccountToken: false
   securityContext:

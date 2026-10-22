@@ -14,14 +14,15 @@ itself go upstream as pull requests; this repository only holds the packaging.
 | `docs/` | Phase 1 specification, install and operation runbooks |
 | `.github/workflows/` | Static checks: helm lint, kubeconform, shellcheck |
 
-Current state: one complete BigBlueButton 4.1 cell per cluster (namespace `bbb`): Postgres,
+Current state: one complete BigBlueButton 4.1 cell per release, one release per namespace: Postgres,
 Redis, the database bootstrap Job, akka-apps, the GraphQL stack (Hasura, graphql-actions,
 graphql-middleware), bbb-web and the front nginx with the html5 client, shared notes, the
 annotation export, webhooks, audio through LiveKit (bbb-webrtc-sfu, bbb-webrtc-recorder), and
 recording with playback (presentation format), behind one public host on a `LoadBalancer`
-Service. `helm test` checks an install through the API. What runs, the invariants it depends on,
-the decisions behind it and its known limitations are in [docs/phase1.md](docs/phase1.md). To
-install, see [docs/install.md](docs/install.md); for the cluster itself,
+Service. Several cells share a cluster on their own nodes ([docs/install.md](docs/install.md),
+"Several cells in one cluster"). `helm test` checks an install through the API. What runs, the
+invariants it depends on, the decisions behind it and its known limitations are in
+[docs/phase1.md](docs/phase1.md). To install, see [docs/install.md](docs/install.md); for the cluster itself,
 [docs/doks.md](docs/doks.md) (DigitalOcean) or [docs/k3s.md](docs/k3s.md) (one machine, local
 tests).
 
@@ -30,7 +31,8 @@ tests).
 Three phases:
 
 1. **One cell on Kubernetes**: this repository today ([docs/phase1.md](docs/phase1.md)).
-2. **Multiple cells.**
+2. **Multiple cells**: in progress. The chart installs once per namespace; the controller that
+   adds and retires cells behind a load balancer (Scalelite) comes next.
 3. **Architectural improvements, fault tolerance and scale.**
 
 ## Images

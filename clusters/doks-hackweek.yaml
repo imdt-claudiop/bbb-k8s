@@ -17,3 +17,13 @@ livekit:
         includes:
           - 142.93.115.37/32
           - 10.116.0.0/20
+# The cell installed here before the chart supported several cells keeps what it was created
+# with: the storage class of a volume claim cannot change, and the load balancer keeps its name.
+postgres: { storageClass: do-block-storage-retain }
+redis: { storageClass: do-block-storage-retain }
+bbbData: { storageClass: do-block-storage-retain }
+webrtcRecorder: { storageClass: do-block-storage-retain }
+nginx:
+  service:
+    annotations:
+      service.beta.kubernetes.io/do-loadbalancer-name: bbb-k8s

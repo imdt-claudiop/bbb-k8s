@@ -12,6 +12,39 @@ app.kubernetes.io/name: {{ . }}
 {{- define "bbb.nodeSelector" -}}
 nodeSelector:
   {{ .root.Values.nodeRoleLabel }}: {{ .role }}
+  {{- with .root.Values.cell }}
+  {{ $.root.Values.cellLabel }}: {{ include "bbb.cell" $.root | quote }}
+  {{- end }}
+{{- include "bbb.cellTolerations" .root }}
+{{- end }}
+
+{{/* The cell's own nodes, for the pods without a role (the Jobs and helm test): the cell label
+     and the toleration of its taint. Empty without values cell. */}}
+{{- define "bbb.cellPlacement" -}}
+{{- with .Values.cell }}
+nodeSelector:
+  {{ $.Values.cellLabel }}: {{ include "bbb.cell" $ | quote }}
+{{- include "bbb.cellTolerations" $ }}
+{{- end }}
+{{- end }}
+
+{{- define "bbb.cellTolerations" -}}
+{{- with .Values.cell }}
+tolerations:
+  - key: {{ $.Values.cellLabel }}
+    operator: Equal
+    value: {{ include "bbb.cell" $ | quote }}
+    effect: NoSchedule
+{{- end }}
+{{- end }}
+
+{{/* values cell, checked: it becomes a label value. */}}
+{{- define "bbb.cell" -}}
+{{- $c := toString .Values.cell }}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" $c) }}
+{{- fail (printf "cell is %q: lowercase letters, digits and dashes, a label value" $c) }}
+{{- end }}
+{{- $c }}
 {{- end }}
 
 {{/* An official image: include "bbb.officialImage" (dict "root" . "name" "web") */}}

@@ -4,7 +4,9 @@
 #
 # The images are the public official ones: no pull Secret.
 #
-# Env: TLS_CERT, TLS_KEY: certificate (full chain) and key for the public host, PEM files. The
+# Env: NS (default bbb): the namespace of the cell. Each cell has its own Secrets; run once per
+#      cell (NS=cell-<n>) with a certificate that covers the cell's public host.
+#      TLS_CERT, TLS_KEY: certificate (full chain) and key for the public host, PEM files. The
 #      TLS Secret is refreshed from them on every run (certificates expire).
 #      TLS_SOURCE=imdt-test: lab shortcut instead of TLS_CERT/TLS_KEY. Downloads iMDT's
 #      *.bbb.imdt.dev wildcard from a.bbb.imdt.dev, as bbb-docker-dev does. Its private key is

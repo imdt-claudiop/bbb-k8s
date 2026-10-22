@@ -84,7 +84,7 @@ has exactly one replica.
 | api-smoke (helm test Pod) | `bbb-apps-akka` | any | - | end-to-end API check (section 13) |
 
 Images without a registry prefix are `officialImages.registry` with `officialImages.tag`
-(`chart/templates/_helpers.tpl:18-20`). The only Service of type `LoadBalancer` is `bbb-nginx`
+(`chart/templates/_helpers.tpl:51-53`). The only Service of type `LoadBalancer` is `bbb-nginx`
 (443, 80); the others are ClusterIP.
 
 ## 4. State and data
@@ -93,13 +93,16 @@ Images without a registry prefix are `officialImages.registry` with `officialIma
 |---|---|---|---|
 | `bbb_graphql` | Postgres volume (10Gi) | no: derived from akka-apps, recreated when the schema marker changes (section 11) | bootstrap Job |
 | `hasura_app`, `blocknote_app` (notes) | Postgres volume | yes: created when missing, never dropped (`chart/scripts/bootstrap.sh:5-6`) | bootstrap Job |
-| Redis data | Redis volume (5Gi), AOF (`chart/templates/redis.yaml:43`) | yes: resque and export queues, recording events, LiveKit routing, registered hooks | redis |
+| Redis data | Redis volume (5Gi), AOF (`chart/templates/redis.yaml:48`) | yes: resque and export queues, recording events, LiveKit routing, registered hooks | redis |
 | presentations, recordings, published playback | `bbb-data` PVC, 20Gi, ReadWriteOnce, `/var/bigbluebutton` | yes | uid/gid 998 |
 | raw recorder tracks | `bbb-recorder` PVC, 20Gi, ReadWriteOnce | until archived (the archive step deletes them, install.md "Recording and playback") | uid/gid 998 |
 | secrets | `bbb-db`, `bbb-salt`, `bbb-hasura`, `bbb-livekit`, `bbb-tls`, optional `secrets.extraCA` | created once by `scripts/create-secrets.sh` (TLS refreshed every run) | operator |
 
-The default storage class is `do-block-storage-retain` (`chart/values.yaml`, `storageClass`
-keys): deleting the release keeps the cloud volumes (install.md, "Uninstall and cleanup").
+The default storage class is `do-block-storage` (`chart/values.yaml`, `storageClass` keys,
+reclaim policy `Delete`), and the Postgres and Redis StatefulSets delete their claims with the
+release (`persistentVolumeClaimRetentionPolicy`): the volumes die with the cell (install.md,
+"Uninstall and cleanup"). `clusters/doks-hackweek.yaml` keeps `do-block-storage-retain` for the
+cell it already runs.
 
 ## 5. Invariants
 
@@ -125,8 +128,8 @@ Each invariant is a rule the code imposes; breaking it breaks the cell.
   and notes URLs from the page's host
   (`upstream:bigbluebutton-html5/imports/ui/components/livekit/primary-room/component.tsx:197`,
   `upstream:bigbluebutton-html5/imports/ui/components/bn-shared-notes/hooks.ts:65`). Verify: one
-  release per cluster, in the namespace `bbb` (`chart/templates/namespace.yaml:1-3` refuses any
-  other); `publicHost` unique per cluster.
+  release per namespace, on the nodes labelled with its `cell` (install.md, "Several cells in
+  one cluster"); `publicHost` unique per release.
 - **I4. Every pod that writes `bbb-data` or `bbb-recorder` MUST run as uid/gid 998.** The
   directories belong to `bigbluebutton` (998), and bbb-web, nginx, recording,
   export-annotations and the recorder read each other's files (`chart/templates/webrtc-recorder.yaml:38-41`,
@@ -145,20 +148,20 @@ A cell owns, and MUST NOT share (I3): its namespace, its Postgres StatefulSet an
 Redis StatefulSet and volume, its `bbb-data` and `bbb-recorder` volumes, its secrets, its
 `publicHost` and load balancer, and its media node's LiveKit (host network, one LiveKit per
 node because of the fixed ports). Inside the namespace a default-deny NetworkPolicy admits only
-the listed flows (`chart/templates/networkpolicy.yaml`, D6). The chart installs only into
-the namespace `bbb` (`chart/templates/namespace.yaml:1-3`), so a cluster holds one cell; it does
-not route meetings between cells.
+the listed flows (`chart/templates/networkpolicy.yaml`, D6). The chart installs one cell per
+release in any namespace; with `cell` set, the cell's pods run only on its own nodes (install.md,
+"Several cells in one cluster"). It does not route meetings between cells.
 
 ## 7. Interfaces
 
-- **Public host** (`publicHost`, required, `chart/templates/_helpers.tpl:63`): every client
+- **Public host** (`publicHost`, required, `chart/templates/_helpers.tpl:96`): every client
   and API URL derives from it (`bigbluebutton.web.serverURL`). It MUST resolve to the load
   balancer IP and MUST be covered by `bbb-tls`.
 - **BigBlueButton API**: `https://<publicHost>/bigbluebutton/api/<call>?<query>&checksum=<sha1>`,
   signed with `bbb-salt`; webhooks at `/bigbluebutton/api/hooks/*` through `bbb-webhooks:3005`.
 - **Paths behind bbb-nginx**: `chart/files/nginx/*.nginx`, the official location files with
   the Service names of this chart (`scripts/sync-upstream.sh:44-80`).
-- **Values an operator sets per cluster**: `publicHost`, `livekit.nodeIP`,
+- **Values an operator sets per cell**: `publicHost`, `cell`, `livekit.nodeIP`,
   `livekit.networkPolicy`, `livekit.config` (e.g. `rtc.ips.includes`, `rtc.tcp_port`), the
   `role` and `storageClass` keys, `nginx.service`, `secrets.extraCA` (`clusters/*.yaml` are
   examples).
@@ -184,10 +187,11 @@ not route meetings between cells.
 ## 9. Deployment
 
 - **Placement** (D1): `nodeSelector` `bbb-k8s/role=<role>` from the `role` keys
-  (`chart/templates/_helpers.tpl:12-15`, `nodeRoleLabel`). A node carries one value; several
-  roles share a node by pointing their `role` keys at the same value.
+  (`chart/templates/_helpers.tpl:12-49`, `nodeRoleLabel`). A node carries one value; several
+  roles share a node by pointing their `role` keys at the same value. With `cell` set, every pod
+  also selects `bbb-k8s/cell=<cell>` and tolerates the taint of the same name.
 - **Entry** (D12): `bbb-nginx` Service `LoadBalancer`, `externalTrafficPolicy: Local`
-  (`chart/values.yaml:141`), TLS terminated by nginx; no Ingress.
+  (`chart/values.yaml:149`), TLS terminated by nginx; no Ingress.
 - **Media network** (D4): LiveKit with `hostNetwork: true` (`chart/templates/livekit.yaml:59`).
 - **Network policy** (D6, D14): default-deny plus named allows; LiveKit's flows by Cilium node
   entities or by `livekit.nodeIP`, as `livekit.networkPolicy` says
@@ -216,10 +220,10 @@ not route meetings between cells.
 - Recreates `bbb_graphql` only when its marker differs or it is missing, and writes the marker
   last (`chart/scripts/bootstrap.sh:61-86`).
 - Its name hashes the schema sha, the script, the Postgres image and the official image tag
-  (`chart/templates/_helpers.tpl:22-27`): Job templates are immutable, so any change creates a
+  (`chart/templates/_helpers.tpl:55-60`): Job templates are immutable, so any change creates a
   new Job; a re-run with an unchanged marker keeps the database (I2).
 - akka-apps waits for the marker in an init container (`wait-bootstrap`,
-  `chart/templates/_helpers.tpl:39`) and starts after it.
+  `chart/templates/_helpers.tpl:72`) and starts after it.
 
 ## 12. Operations
 
@@ -344,5 +348,5 @@ identifier.
   (section 13).
 - **L15** external-dns publication of the public host was rendered, not run against a provider.
 - **L16** Scale limits per cell (meetings, participants) were not measured.
-- **L17** One cell per cluster: the namespace is fixed at `bbb`; a second cell needs another
-  cluster (or a chart change, phase 2).
+- **L17** One cell per cluster: the namespace was fixed at `bbb`. Lifted in phase 2: one
+  release per namespace (install.md, "Several cells in one cluster").

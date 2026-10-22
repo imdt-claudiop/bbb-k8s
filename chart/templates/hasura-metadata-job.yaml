@@ -19,6 +19,9 @@ spec:
         {{- include "bbb.selector" "hasura-metadata" | nindent 8 }}
     spec:
       restartPolicy: Never
+      {{- with include "bbb.cellPlacement" . }}
+      {{- . | nindent 6 }}
+      {{- end }}
       initContainers:
         # Never check consistency while the bootstrap is recreating bbb_graphql.
         {{- include "bbb.waitBootstrap" (dict "root" . "user" "bbb_hasura" "key" "bbb-hasura-password") | nindent 8 }}
